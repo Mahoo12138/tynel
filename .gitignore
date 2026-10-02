@@ -1,0 +1,20 @@
+# New MVP build outputs
+.work/
+bin/
+out/
+node_modules/
+__pycache__/
+*.pyc
+
+# Preserved archive toolchains, worktrees, local reports and binaries
+.tynel/
+.upstream/
+.research/
+dist/
+
+# Local-only editor state and secrets
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example

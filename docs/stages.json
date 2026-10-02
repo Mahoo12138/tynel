@@ -1,0 +1,637 @@
+{
+  "schemaVersion": 2,
+  "track": "mvp",
+  "deliverable": "typescript-to-native-compiler",
+  "phase": "planning",
+  "currentImplementationNode": null,
+  "target": "windows/amd64",
+  "planningRootIsChapter": false,
+  "completedTagsImmutable": true,
+  "implementationCommitsPerNode": "one-or-more",
+  "stages": [
+    {
+      "id": "01",
+      "chapter": 1,
+      "title": "一份加法描述怎样成为二进制",
+      "tag": "mvp/01-native-ir",
+      "dependsOn": [],
+      "status": "planned",
+      "plannedNote": "docs/notes/01-native-ir.md",
+      "goal": "手写 NIR 生成原生 42，并能跟踪编译工具与产物",
+      "gateSubnode": "01.08",
+      "subnodes": [
+        {
+          "id": "01.01",
+          "title": "核验 Go 基线并准备隔离工具链",
+          "dependsOn": [],
+          "planSection": "PLAN.md#task-01-01",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.02",
+          "title": "建立工程入口、诊断和测试骨架",
+          "dependsOn": [
+            "01.01"
+          ],
+          "planSection": "PLAN.md#task-01-02",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.03",
+          "title": "定义最小 NIR 并实现无损读写",
+          "dependsOn": [
+            "01.02"
+          ],
+          "planSection": "PLAN.md#task-01-03",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.04",
+          "title": "独立验证函数、引用和类型",
+          "dependsOn": [
+            "01.03"
+          ],
+          "planSection": "PLAN.md#task-01-04",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.05",
+          "title": "构造 Go 内部节点并构建 bridge",
+          "dependsOn": [
+            "01.01",
+            "01.04"
+          ],
+          "planSection": "PLAN.md#task-01-05",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.06",
+          "title": "接通 build-ir 与产物发布",
+          "dependsOn": [
+            "01.02",
+            "01.05"
+          ],
+          "planSection": "PLAN.md#task-01-06",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.07",
+          "title": "验证数值、回放和输入变化",
+          "dependsOn": [
+            "01.06"
+          ],
+          "planSection": "PLAN.md#task-01-07",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "01.08",
+          "title": "复现加法实验并完成第一篇",
+          "dependsOn": [
+            "01.07"
+          ],
+          "planSection": "PLAN.md#task-01-08",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "chapter": 2,
+      "title": "从真实 TypeScript 生成二进制",
+      "tag": "mvp/02-source",
+      "dependsOn": [
+        "01"
+      ],
+      "status": "planned",
+      "plannedNote": "docs/notes/02-source.md",
+      "goal": "真实 TypeScript 经过独立检查和降低生成原生程序",
+      "gateSubnode": "02.09",
+      "subnodes": [
+        {
+          "id": "02.01",
+          "title": "锁定 tsgo 并建立原生适配会话",
+          "dependsOn": [
+            "01.08"
+          ],
+          "planSection": "PLAN.md#task-02-01",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.02",
+          "title": "固定源码快照与错误位置",
+          "dependsOn": [
+            "02.01"
+          ],
+          "planSection": "PLAN.md#task-02-02",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.03",
+          "title": "提取声明身份和自有事实",
+          "dependsOn": [
+            "02.02"
+          ],
+          "planSection": "PLAN.md#task-02-03",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.04",
+          "title": "实施原生能力白名单",
+          "dependsOn": [
+            "02.03"
+          ],
+          "planSection": "PLAN.md#task-02-04",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.05",
+          "title": "降低数值函数并保持求值顺序",
+          "dependsOn": [
+            "02.04"
+          ],
+          "planSection": "PLAN.md#task-02-05",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.06",
+          "title": "实现 void 调用和受限控制台输出",
+          "dependsOn": [
+            "02.05"
+          ],
+          "planSection": "PLAN.md#task-02-06",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.07",
+          "title": "将 check、build、run 接到同一编译流程",
+          "dependsOn": [
+            "01.06",
+            "02.06"
+          ],
+          "planSection": "PLAN.md#task-02-07",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.08",
+          "title": "建立源码到原生的回归集合",
+          "dependsOn": [
+            "02.07"
+          ],
+          "planSection": "PLAN.md#task-02-08",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "02.09",
+          "title": "完成真实源码实验与第二篇",
+          "dependsOn": [
+            "02.08"
+          ],
+          "planSection": "PLAN.md#task-02-09",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "chapter": 3,
+      "title": "编译条件选择而不多执行一步",
+      "tag": "mvp/03-choices",
+      "dependsOn": [
+        "02"
+      ],
+      "status": "planned",
+      "plannedNote": "docs/notes/03-choices.md",
+      "goal": "分支、布尔短路和同类结果三元选择",
+      "gateSubnode": "03.08",
+      "subnodes": [
+        {
+          "id": "03.01",
+          "title": "让 boolean 成为完整的标量类型",
+          "dependsOn": [
+            "02.09"
+          ],
+          "planSection": "PLAN.md#task-03-01",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.02",
+          "title": "实现比较与严格相等",
+          "dependsOn": [
+            "03.01"
+          ],
+          "planSection": "PLAN.md#task-03-02",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.03",
+          "title": "保留 if 分支和词法作用域",
+          "dependsOn": [
+            "03.02"
+          ],
+          "planSection": "PLAN.md#task-03-03",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.04",
+          "title": "检查提前返回和完整返回路径",
+          "dependsOn": [
+            "03.03"
+          ],
+          "planSection": "PLAN.md#task-03-04",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.05",
+          "title": "降低布尔短路表达式",
+          "dependsOn": [
+            "03.04"
+          ],
+          "planSection": "PLAN.md#task-03-05",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.06",
+          "title": "实现三元式的结果选择",
+          "dependsOn": [
+            "03.05"
+          ],
+          "planSection": "PLAN.md#task-03-06",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.07",
+          "title": "验证条件表达式的组合行为",
+          "dependsOn": [
+            "03.06"
+          ],
+          "planSection": "PLAN.md#task-03-07",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "03.08",
+          "title": "完成选择实验与第三篇",
+          "dependsOn": [
+            "03.07"
+          ],
+          "planSection": "PLAN.md#task-03-08",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "04",
+      "chapter": 4,
+      "title": "编译会更新状态的程序",
+      "tag": "mvp/04-loops",
+      "dependsOn": [
+        "03"
+      ],
+      "status": "planned",
+      "plannedNote": "docs/notes/04-loops.md",
+      "goal": "初始化局部变量、赋值、while、递归和退出路径",
+      "gateSubnode": "04.07",
+      "subnodes": [
+        {
+          "id": "04.01",
+          "title": "区分声明身份与可变存储",
+          "dependsOn": [
+            "03.08"
+          ],
+          "planSection": "PLAN.md#task-04-01",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "04.02",
+          "title": "实现局部简单赋值",
+          "dependsOn": [
+            "04.01"
+          ],
+          "planSection": "PLAN.md#task-04-02",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "04.03",
+          "title": "让 while 重复检查条件",
+          "dependsOn": [
+            "04.02"
+          ],
+          "planSection": "PLAN.md#task-04-03",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "04.04",
+          "title": "处理 break、continue 与嵌套循环",
+          "dependsOn": [
+            "04.03"
+          ],
+          "planSection": "PLAN.md#task-04-04",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "04.05",
+          "title": "验证直接递归与调用栈",
+          "dependsOn": [
+            "04.02"
+          ],
+          "planSection": "PLAN.md#task-04-05",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "04.06",
+          "title": "验证状态和控制组合",
+          "dependsOn": [
+            "04.04",
+            "04.05"
+          ],
+          "planSection": "PLAN.md#task-04-06",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "04.07",
+          "title": "完成状态实验与第四篇",
+          "dependsOn": [
+            "04.06"
+          ],
+          "planSection": "PLAN.md#task-04-07",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "05",
+      "chapter": 5,
+      "title": "从多个源文件构建一个程序",
+      "tag": "mvp/05-modules",
+      "dependsOn": [
+        "04"
+      ],
+      "status": "planned",
+      "plannedNote": "docs/notes/05-modules.md",
+      "goal": "静态依赖图、命名导入导出和类型导入",
+      "gateSubnode": "05.08",
+      "subnodes": [
+        {
+          "id": "05.01",
+          "title": "确定项目根和路径解析规则",
+          "dependsOn": [
+            "04.07"
+          ],
+          "planSection": "PLAN.md#task-05-01",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.02",
+          "title": "建立完整源码快照与依赖图",
+          "dependsOn": [
+            "05.01"
+          ],
+          "planSection": "PLAN.md#task-05-02",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.03",
+          "title": "解析基础类型别名和纯类型导入",
+          "dependsOn": [
+            "05.02"
+          ],
+          "planSection": "PLAN.md#task-05-03",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.04",
+          "title": "绑定导入导出和跨模块名称",
+          "dependsOn": [
+            "05.02"
+          ],
+          "planSection": "PLAN.md#task-05-04",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.05",
+          "title": "规定并实现模块初始化顺序",
+          "dependsOn": [
+            "05.03",
+            "05.04"
+          ],
+          "planSection": "PLAN.md#task-05-05",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.06",
+          "title": "合并模块生成一个原生程序",
+          "dependsOn": [
+            "05.05"
+          ],
+          "planSection": "PLAN.md#task-05-06",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.07",
+          "title": "验证依赖变化与构建身份",
+          "dependsOn": [
+            "05.06"
+          ],
+          "planSection": "PLAN.md#task-05-07",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "05.08",
+          "title": "完成多文件实验与第五篇",
+          "dependsOn": [
+            "05.07"
+          ],
+          "planSection": "PLAN.md#task-05-08",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "06",
+      "chapter": 6,
+      "title": "把原型交付为可使用的编译器",
+      "tag": "mvp/06-compiler-mvp",
+      "dependsOn": [
+        "05"
+      ],
+      "status": "planned",
+      "plannedNote": "docs/notes/06-compiler-mvp.md",
+      "goal": "稳定命令、错误诊断、干净构建和二进制独立运行",
+      "gateSubnode": "06.08",
+      "subnodes": [
+        {
+          "id": "06.01",
+          "title": "固定用户命令与帮助契约",
+          "dependsOn": [
+            "05.08"
+          ],
+          "planSection": "PLAN.md#task-06-01",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.02",
+          "title": "统一诊断与外部进程故障",
+          "dependsOn": [
+            "06.01"
+          ],
+          "planSection": "PLAN.md#task-06-02",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.03",
+          "title": "加固构建事务与缓存策略",
+          "dependsOn": [
+            "06.02"
+          ],
+          "planSection": "PLAN.md#task-06-03",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.04",
+          "title": "组装编译器发行目录",
+          "dependsOn": [
+            "06.03"
+          ],
+          "planSection": "PLAN.md#task-06-04",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.05",
+          "title": "在干净目录重建工具和示例",
+          "dependsOn": [
+            "06.04"
+          ],
+          "planSection": "PLAN.md#task-06-05",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.06",
+          "title": "验证生成物可以独立运行",
+          "dependsOn": [
+            "06.05"
+          ],
+          "planSection": "PLAN.md#task-06-06",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.07",
+          "title": "执行完整能力和故障验收",
+          "dependsOn": [
+            "06.06"
+          ],
+          "planSection": "PLAN.md#task-06-07",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        },
+        {
+          "id": "06.08",
+          "title": "完成交付实验与第六篇",
+          "dependsOn": [
+            "06.07"
+          ],
+          "planSection": "PLAN.md#task-06-08",
+          "status": "planned",
+          "implementationCommits": [],
+          "evidence": []
+        }
+      ]
+    }
+  ],
+  "currentSubnode": null,
+  "subnodeCount": 48,
+  "mainChapterCount": 6,
+  "subnodeCommitPolicy": "one-or-more commits; Task: NN.MM trailer",
+  "subnodeTagPolicy": "none by default; explicitly registered checkpoints only"
+}

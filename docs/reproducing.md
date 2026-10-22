@@ -1,10 +1,10 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前只覆盖节点 01.01 的准备工具；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备和 01.02 的构建与测试入口；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
-`tools/toolchain` 能按锁文件在 `.work/` 内准备 go1.27.3 的 SDK 与源码，并报告实际使用的 `go`、`compile`、`link`、`asm` 路径。编译器本身尚未实现：还没有 `tynel` 命令，也没有 NIR 或 TypeScript 前端。
+`tools/toolchain` 能按锁文件在 `.work/` 内准备 go1.27.3 的 SDK 与源码，并报告实际使用的 `go`、`compile`、`link`、`asm` 路径。`./tools/build` 生成的 `bin/tynel` 能显示版本与锁定的工具链身份、检查工具是否可用。编译器本身尚未实现：没有 TypeScript 前端、NIR 或代码生成，`tynel build` 仍是未知命令。
 
 ## 前置条件
 
@@ -42,6 +42,21 @@ cd tynel
 
 也可以直接用 `go run tools/toolchain/prep.go` 准备，但 `go run` 会把子进程的非零退出码统一成 1，脚本判断失败原因时应使用 `./tools/toolchain/prep`。
 
+## 构建与测试
+
+```zsh
+# 在项目根目录构建开发用入口；使用 .work 内的隔离 Go。
+./tools/build
+
+# 显示版本、目标平台和锁定的工具链身份。
+./bin/tynel version
+
+# 运行全部 Go 测试；用 -count=1 禁用缓存，只统计真正跑过用例的包。
+./tools/test
+```
+
+`bin/tynel` 不进入版本库。命令、退出状态和职责划分见[命令行参考](reference/cli.md)。
+
 ## 生成了什么
 
 | 路径 | 内容 | 能否重建 |
@@ -52,6 +67,7 @@ cd tynel
 | `.work/toolchain/manifests/` | 每份安装的来源身份与安装时间 | 能，重新准备时重写 |
 | `.work/toolchain/toolchain.json` | 本次准备的报告：锁文件身份、宿主 Go、工具路径、归档校验和 | 能，每次运行重写 |
 | `.work/bin/prep` | 准备入口的编译产物 | 能，包装脚本每次重建 |
+| `bin/tynel` | 开发用的命令行入口 | 能，`./tools/build` 重建 |
 
 这些目录都在 `.gitignore` 覆盖范围内，不进入版本库。
 

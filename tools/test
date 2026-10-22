@@ -1,0 +1,32 @@
+#!/bin/zsh
+# 运行全部 Go 测试。使用 01.01 准备的隔离 Go，避免宿主版本漂移。
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+GO=$(find "$ROOT/.work/toolchain" -maxdepth 3 -path '*/bin/go' -type f 2>/dev/null | head -1)
+if [[ -z "$GO" ]]; then
+  print -u2 -- "找不到隔离 Go 工具链；先在项目根运行 ./tools/toolchain/prep"
+  exit 1
+fi
+
+cd "$ROOT"
+print -- "使用 $("$GO" version)"
+
+set +e
+OUTPUT=$("$GO" test -count=1 ./... 2>&1)
+STATUS=$?
+set -e
+print -r -- "$OUTPUT"
+
+if (( STATUS != 0 )); then
+  print -u2 -- "测试失败：退出状态 $STATUS"
+  exit $STATUS
+fi
+
+# 只统计真正跑过用例的包；没有包报告 ok 说明测试没执行，不能算通过。
+PASSED=$(print -r -- "$OUTPUT" | grep -c '^ok' || true)
+print -- "测试通过：$PASSED 个包"
+if (( PASSED == 0 )); then
+  print -u2 -- "没有任何包报告通过，按失败处理"
+  exit 1
+fi

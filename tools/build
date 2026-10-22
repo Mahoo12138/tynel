@@ -1,0 +1,17 @@
+#!/bin/zsh
+# 构建 bin/tynel。版本提交用 -ldflags 注入，构建使用 01.01 准备的隔离 Go。
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+GO=$(find "$ROOT/.work/toolchain" -maxdepth 3 -path '*/bin/go' -type f 2>/dev/null | head -1)
+if [[ -z "$GO" ]]; then
+  print -u2 -- "找不到隔离 Go 工具链；先在项目根运行 ./tools/toolchain/prep"
+  exit 1
+fi
+
+COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || print -- none)
+
+mkdir -p "$ROOT/bin"
+cd "$ROOT"
+"$GO" build -trimpath -ldflags "-X main.commit=$COMMIT" -o "$ROOT/bin/tynel" ./cmd/tynel
+print -- "已生成 $ROOT/bin/tynel（commit $COMMIT）"

@@ -43,9 +43,12 @@
             "01.01"
           ],
           "planSection": "PLAN.md#task-01-02",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/cli.md",
+            "docs/validation/01-02-entry.md"
+          ]
         },
         {
           "id": "01.03",

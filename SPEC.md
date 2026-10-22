@@ -4,7 +4,7 @@
 
 ## 1. 交付目标
 
-交付一个将 TypeScript 源文件编译为原生二进制的编译器。用户通过 `tynel build input.ts -o out/program.exe` 完成构建，产物使用 Go 运行时，可以脱离 TypeScript 源文件和 JavaScript 引擎运行。首个目标为 Windows amd64。
+交付一个将 TypeScript 源文件编译为原生二进制的编译器。用户通过 `tynel build input.ts -o out/program` 完成构建，产物使用 Go 运行时，可以脱离 TypeScript 源文件和 JavaScript 引擎运行。首个目标为 Apple Silicon macOS（`darwin/arm64`），开发与验收基线是 Mac mini（Apple M4，macOS 26.6.2）；Windows amd64 和其他平台作为后续扩展，不属于首版验收范围。
 
 MVP 以编译器能正确处理约定的源语言子集、产生可运行二进制并报告错误为准。HTTP、JSON 应用协议、数据库和前后端应用不属于验收条件。扩展语言能力和标准库是后续工作，不用业务服务定义编译器是否成立。
 

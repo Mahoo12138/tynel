@@ -4,7 +4,10 @@
   "deliverable": "typescript-to-native-compiler",
   "phase": "planning",
   "currentImplementationNode": null,
-  "target": "windows/amd64",
+  "target": "darwin/arm64",
+  "deferredTargets": [
+    "windows/amd64"
+  ],
   "planningRootIsChapter": false,
   "completedTagsImmutable": true,
   "implementationCommitsPerNode": "one-or-more",

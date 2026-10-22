@@ -2,7 +2,7 @@
 
 Tynel 是一个学习型 TypeScript-to-native 编译器项目。目标是复用 tsgo 前端和 Go 编译器后端，将受限 TypeScript 编译为使用 Go 运行时的原生程序。
 
-MVP 的交付物是编译器本身：通过 `tynel build input.ts -o out/program.exe` 将约定子集的 TypeScript 编译为原生二进制，并提供类型与能力检查、错误诊断和可重复构建。应用服务不是验收条件。
+MVP 的交付物是编译器本身：通过 `tynel build input.ts -o out/program` 将约定子集的 TypeScript 编译为 `darwin/arm64` 原生二进制，并提供类型与能力检查、错误诊断和可重复构建。应用服务不是验收条件。
 
 当前 `main` 仍处于计划阶段，尚无编译器代码或可用构建命令。新计划分为 6 个主节点、48 个开发子节点和 6 篇主笔记：原生后端、真实源码、条件选择、局部状态与循环、静态模块、编译器交付。首版以 `number`、`boolean` 和结构化控制流为语言边界；字符串、对象和数组作为后续语言扩展，不要求先完成某个应用。
 

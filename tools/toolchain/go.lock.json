@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "lockedAt": "2026-10-22",
+  "go": {
+    "version": "go1.27.3",
+    "sourceTag": "go1.27.3",
+    "sourceCommit": "2aae1000ea1d4b28923b96db28acf4e3b99d6aff",
+    "license": "BSD-3-Clause",
+    "licenseFile": "LICENSE",
+    "sourceArchive": {
+      "filename": "go1.27.3.src.tar.gz",
+      "url": "https://go.dev/dl/go1.27.3.src.tar.gz",
+      "sha256": "6e7749035cf360f06b2575d162ea79df9fda8ef671889e5c375f8e50777f26bb",
+      "size": 35134035
+    },
+    "sdkArchive": {
+      "filename": "go1.27.3.darwin-arm64.tar.gz",
+      "url": "https://go.dev/dl/go1.27.3.darwin-arm64.tar.gz",
+      "sha256": "dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2",
+      "size": 68196737
+    }
+  },
+  "targets": {
+    "host": "darwin/arm64",
+    "primary": "darwin/arm64",
+    "deferred": [
+      "windows/amd64"
+    ]
+  },
+  "bootstrap": {
+    "minimumGoVersion": "go1.24",
+    "derivation": "src/cmd/dist/build.go 的 requiredBootstrapVersion 对 src/go.mod 声明的 go 1.27 计算得到 go1.24",
+    "hostGoObserved": "go1.27.0 darwin/arm64",
+    "note": "源码自举由宿主 Go 提供 GOROOT_BOOTSTRAP；准备阶段只解压源码，不修改宿主安装。"
+  },
+  "bridge": {
+    "patchFiles": []
+  }
+}

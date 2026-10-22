@@ -1,0 +1,18 @@
+#!/bin/zsh
+# Tynel 工具链准备入口。
+#
+#   ./tools/toolchain/prep            按锁文件准备 Go SDK 与源码
+#   ./tools/toolchain/prep --force    丢弃缓存和半成品目录后重新准备
+#
+# 本脚本只负责把 prep.go 编译到 .work/bin/prep 并转交参数，退出码来自 prep 本身。
+# 直接运行 `go run tools/toolchain/prep.go` 也可以准备工具链，但 go run 会把
+# 非零退出码统一成 1，脚本判断失败原因时应使用本入口。
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+BIN_DIR="$ROOT/.work/bin"
+BIN="$BIN_DIR/prep"
+
+mkdir -p "$BIN_DIR"
+go build -o "$BIN" "$ROOT/tools/toolchain/prep.go"
+exec "$BIN" --project "$ROOT" "$@"

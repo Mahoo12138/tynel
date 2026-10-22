@@ -1,0 +1,930 @@
+// Command prep 按 tools/toolchain/go.lock.json 在项目内的 .work/ 目录准备隔离 Go 工具链。
+//
+//	go run tools/toolchain/prep.go                 # 准备 SDK 与源码；重复执行只做校验
+//	go run tools/toolchain/prep.go --force         # 丢弃缓存和半成品目录后重新准备
+//	go run tools/toolchain/prep.go --check-remote  # 额外用 git ls-remote 复核源码标签
+//
+// 命令只写项目内的 .work/，不修改宿主 Go 安装，也不写入全局环境变量或代理配置。
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
+	"strings"
+	"time"
+)
+
+// 退出码区分失败类别，便于脚本判断和负向验收。
+const (
+	exitInternal = 1 // 未分类的内部故障
+	exitUsage    = 2 // 参数用法错误
+	exitLock     = 3 // 锁文件缺失、格式错误或内容非法
+	exitHost     = 4 // 宿主平台与锁文件目标不一致
+	exitNet      = 5 // 下载或网络失败
+	exitHash     = 6 // 校验和不符
+	exitFS       = 7 // 目录、权限或解压失败
+	exitVerify   = 8 // 版本、工具或完整性校验失败
+)
+
+const (
+	lockRelativePath = "tools/toolchain/go.lock.json"
+	workDirName      = ".work"
+	downloadDirName  = "downloads"
+	toolchainDirName = "toolchain"
+	manifestDirName  = "manifests"
+	reportName       = "toolchain.json"
+)
+
+// artifact 是锁文件中的一份可下载文件及其身份。
+type artifact struct {
+	Filename string `json:"filename"`
+	URL      string `json:"url"`
+	SHA256   string `json:"sha256"`
+	Size     int64  `json:"size"`
+}
+
+type lockGo struct {
+	Version       string   `json:"version"`
+	SourceTag     string   `json:"sourceTag"`
+	SourceCommit  string   `json:"sourceCommit"`
+	License       string   `json:"license"`
+	LicenseFile   string   `json:"licenseFile"`
+	SourceArchive artifact `json:"sourceArchive"`
+	SDKArchive    artifact `json:"sdkArchive"`
+}
+
+type lockTargets struct {
+	Host     string   `json:"host"`
+	Primary  string   `json:"primary"`
+	Deferred []string `json:"deferred"`
+}
+
+type lockBootstrap struct {
+	MinimumGoVersion string `json:"minimumGoVersion"`
+	Derivation       string `json:"derivation"`
+	HostGoObserved   string `json:"hostGoObserved"`
+	Note             string `json:"note"`
+}
+
+type patchFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+type lockBridge struct {
+	PatchFiles []patchFile `json:"patchFiles"`
+}
+
+type lockFile struct {
+	SchemaVersion int           `json:"schemaVersion"`
+	LockedAt      string        `json:"lockedAt"`
+	Go            lockGo        `json:"go"`
+	Targets       lockTargets   `json:"targets"`
+	Bootstrap     lockBootstrap `json:"bootstrap"`
+	Bridge        lockBridge    `json:"bridge"`
+}
+
+// manifest 记录一次成功安装的来源身份，用于下次运行时判定目录是否完整。
+type manifest struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	Name          string            `json:"name"`
+	Kind          string            `json:"kind"`
+	Version       string            `json:"version"`
+	VersionStamp  string            `json:"versionStamp,omitempty"`
+	Target        string            `json:"target"`
+	Archive       artifact          `json:"archive"`
+	InstalledAt   string            `json:"installedAt"`
+	Tools         map[string]string `json:"tools,omitempty"`
+}
+
+// install 是一次准备动作的结果，也用于写入总报告。
+type install struct {
+	Kind     string            `json:"kind"`
+	Name     string            `json:"name"`
+	Dir      string            `json:"dir"`
+	Version  string            `json:"version"`
+	Stamp    string            `json:"versionStamp,omitempty"`
+	Target   string            `json:"target"`
+	Archive  artifact          `json:"archive"`
+	Tools    map[string]string `json:"tools,omitempty"`
+	Reused   bool              `json:"reused"`
+	Verified bool              `json:"verified"`
+}
+
+type hostInfo struct {
+	GOOS            string `json:"goos"`
+	GOARCH          string `json:"goarch"`
+	GoBinary        string `json:"goBinary"`
+	GoVersion       string `json:"goVersion"`
+	GOROOT          string `json:"goroot"`
+	GOROOTUnchanged bool   `json:"gorootUnchanged"`
+}
+
+type report struct {
+	SchemaVersion int       `json:"schemaVersion"`
+	PreparedAt    string    `json:"preparedAt"`
+	ProjectRoot   string    `json:"projectRoot"`
+	LockFile      string    `json:"lockFile"`
+	LockedVersion string    `json:"lockedVersion"`
+	SourceTag     string    `json:"sourceTag"`
+	SourceCommit  string    `json:"sourceCommit"`
+	License       string    `json:"license"`
+	Target        string    `json:"target"`
+	Host          hostInfo  `json:"host"`
+	Installs      []install `json:"installs"`
+	PatchFiles    []string  `json:"patchFiles"`
+	Notes         []string  `json:"notes"`
+}
+
+// failErr 把退出码和可读原因绑定在一起。
+type failErr struct {
+	code int
+	err  error
+}
+
+func (e *failErr) Error() string { return e.err.Error() }
+func (e *failErr) Unwrap() error { return e.err }
+
+func failf(code int, format string, args ...any) error {
+	return &failErr{code: code, err: fmt.Errorf(format, args...)}
+}
+
+func main() {
+	if err := run(); err != nil {
+		code := exitInternal
+		var fe *failErr
+		if errors.As(err, &fe) {
+			code = fe.code
+		}
+		fmt.Fprintf(os.Stderr, "准备失败：%v\n", err)
+		os.Exit(code)
+	}
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `用法：go run tools/toolchain/prep.go [选项]
+
+按 tools/toolchain/go.lock.json 在 .work/ 下准备隔离 Go 工具链，只写项目目录。
+
+选项：
+  --project DIR    指定项目根目录，默认按本文件位置推断
+  --force          删除缓存的下载和半成品目录后重新准备
+  --check-remote   用 git ls-remote 复核源码标签对应的提交
+  --quiet          只输出错误和报告路径
+`)
+}
+
+func run() error {
+	fs := flag.NewFlagSet("prep", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "项目根目录，默认按本文件位置推断")
+	force := fs.Bool("force", false, "删除缓存的下载和半成品目录后重新准备")
+	checkRemote := fs.Bool("check-remote", false, "用 git ls-remote 复核源码标签对应的提交")
+	quiet := fs.Bool("quiet", false, "只输出错误和报告路径")
+	fs.SetOutput(os.Stderr)
+	fs.Usage = usage
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		return failf(exitUsage, "%v", err)
+	}
+	if fs.NArg() > 0 {
+		return failf(exitUsage, "不接受位置参数：%s", strings.Join(fs.Args(), " "))
+	}
+
+	root, err := resolveRoot(*projectFlag)
+	if err != nil {
+		return err
+	}
+	lockPath := filepath.Join(root, filepath.FromSlash(lockRelativePath))
+	lock, err := loadLock(lockPath)
+	if err != nil {
+		return err
+	}
+	host, err := inspectHost()
+	if err != nil {
+		return err
+	}
+	if want := host.GOOS + "/" + host.GOARCH; lock.Targets.Host != want {
+		return failf(exitHost, "锁文件目标为 %s，本机是 %s；只能准备与本机匹配的 SDK。", lock.Targets.Host, want)
+	}
+
+	workDir := filepath.Join(root, workDirName)
+	downloadDir := filepath.Join(workDir, downloadDirName)
+	toolchainDir := filepath.Join(workDir, toolchainDirName)
+	manifestDir := filepath.Join(toolchainDir, manifestDirName)
+	for _, dir := range []string{downloadDir, toolchainDir, manifestDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return failf(exitFS, "无法创建目录 %s：%v", dir, err)
+		}
+	}
+
+	patchPaths, err := verifyPatchFiles(root, lock)
+	if err != nil {
+		return err
+	}
+	if len(patchPaths) > 0 && !*quiet {
+		fmt.Printf("接入文件：%d 个，校验和与锁文件一致\n", len(patchPaths))
+	}
+
+	if *checkRemote {
+		if err := checkRemoteTag(lock); err != nil {
+			return err
+		}
+		if !*quiet {
+			fmt.Printf("远程复核：标签 %s 对应提交 %s，与锁文件一致\n", lock.Go.SourceTag, shortSHA(lock.Go.SourceCommit))
+		}
+	}
+
+	targetSlug := strings.ReplaceAll(lock.Targets.Host, "/", "-")
+	sdk, err := prepareOne("sdk", lock.Go.SDKArchive, lock.Go.Version+"-sdk-"+targetSlug, lock, downloadDir, toolchainDir, manifestDir, *force, *quiet)
+	if err != nil {
+		return err
+	}
+	src, err := prepareOne("src", lock.Go.SourceArchive, lock.Go.Version+"-src", lock, downloadDir, toolchainDir, manifestDir, *force, *quiet)
+	if err != nil {
+		return err
+	}
+
+	after, err := inspectHost()
+	if err != nil {
+		return err
+	}
+	host.GOROOTUnchanged = after.GOROOT == host.GOROOT && after.GoBinary == host.GoBinary
+	if !host.GOROOTUnchanged {
+		return failf(exitVerify, "宿主 Go 安装在准备过程中发生变化：GOROOT %q → %q", host.GOROOT, after.GOROOT)
+	}
+
+	rep := &report{
+		SchemaVersion: 1,
+		PreparedAt:    time.Now().Format(time.RFC3339),
+		ProjectRoot:   root,
+		LockFile:      lockPath,
+		LockedVersion: lock.Go.Version,
+		SourceTag:     lock.Go.SourceTag,
+		SourceCommit:  lock.Go.SourceCommit,
+		License:       lock.Go.License,
+		Target:        lock.Targets.Host,
+		Host:          host,
+		Installs:      []install{*sdk, *src},
+		PatchFiles:    patchPaths,
+		Notes: []string{
+			"工具链只写在项目 .work/ 内，宿主 Go 安装和全局代理设置未改变。",
+			"使用隔离工具链需要显式设置 GOROOT 与 PATH，或在命令中直接使用绝对路径。",
+			"源码目录尚未自举编译；修改版编译器的构建在 01.05 进行。",
+		},
+	}
+	reportPath := filepath.Join(toolchainDir, reportName)
+	if err := writeJSON(reportPath, rep); err != nil {
+		return err
+	}
+
+	if !*quiet {
+		printSummary(rep, reportPath, lock)
+	} else {
+		fmt.Println(reportPath)
+	}
+	return nil
+}
+
+func resolveRoot(projectFlag string) (string, error) {
+	var root string
+	if projectFlag != "" {
+		abs, err := filepath.Abs(projectFlag)
+		if err != nil {
+			return "", failf(exitUsage, "无法解析 --project 路径 %q：%v", projectFlag, err)
+		}
+		root = abs
+	} else {
+		_, file, _, ok := runtime.Caller(0)
+		if !ok {
+			return "", failf(exitInternal, "无法定位准备入口所在目录，请用 --project 指定项目根目录")
+		}
+		if !filepath.IsAbs(file) {
+			abs, err := filepath.Abs(file)
+			if err != nil {
+				return "", failf(exitInternal, "无法解析入口路径 %q：%v", file, err)
+			}
+			file = abs
+		}
+		root = filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", failf(exitUsage, "项目根目录 %s 不可访问：%v", root, err)
+	}
+	if !info.IsDir() {
+		return "", failf(exitUsage, "项目根 %s 不是目录", root)
+	}
+	return root, nil
+}
+
+var (
+	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	goVersionPat  = regexp.MustCompile(`^go[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+)
+
+func loadLock(path string) (*lockFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, failf(exitLock, "无法读取锁文件 %s：%v", path, err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var lock lockFile
+	if err := dec.Decode(&lock); err != nil {
+		return nil, failf(exitLock, "锁文件 %s 不是预期的 JSON 结构：%v", path, err)
+	}
+	if err := validateLock(&lock); err != nil {
+		return nil, failf(exitLock, "锁文件 %s 内容非法：%v", path, err)
+	}
+	return &lock, nil
+}
+
+func validateLock(lock *lockFile) error {
+	if lock.SchemaVersion != 1 {
+		return fmt.Errorf("不支持的 schemaVersion %d，本版本只认识 1", lock.SchemaVersion)
+	}
+	if !goVersionPat.MatchString(lock.Go.Version) {
+		return fmt.Errorf("go.version %q 不是 goX.Y[.Z] 形式", lock.Go.Version)
+	}
+	if !goVersionPat.MatchString(lock.Go.SourceTag) {
+		return fmt.Errorf("go.sourceTag %q 不是 goX.Y[.Z] 形式", lock.Go.SourceTag)
+	}
+	if len(lock.Go.SourceCommit) != 40 || !isHex(lock.Go.SourceCommit) {
+		return fmt.Errorf("go.sourceCommit %q 不是 40 位十六进制提交", lock.Go.SourceCommit)
+	}
+	if lock.Go.License == "" || lock.Go.LicenseFile == "" {
+		return fmt.Errorf("缺少 go.license 或 go.licenseFile")
+	}
+	for name, a := range map[string]artifact{"sourceArchive": lock.Go.SourceArchive, "sdkArchive": lock.Go.SDKArchive} {
+		if err := validateArtifact(a); err != nil {
+			return fmt.Errorf("%s：%v", name, err)
+		}
+	}
+	if lock.Targets.Host == "" || !strings.Contains(lock.Targets.Host, "/") {
+		return fmt.Errorf("targets.host %q 应为 GOOS/GOARCH 形式", lock.Targets.Host)
+	}
+	if lock.Targets.Host != lock.Targets.Primary {
+		return fmt.Errorf("targets.host %q 与 targets.primary %q 不一致", lock.Targets.Host, lock.Targets.Primary)
+	}
+	for _, p := range lock.Bridge.PatchFiles {
+		if p.Path == "" || !sha256Pattern.MatchString(p.SHA256) {
+			return fmt.Errorf("bridge.patchFiles 中的条目 %q 缺少路径或合法 sha256", p.Path)
+		}
+	}
+	return nil
+}
+
+func validateArtifact(a artifact) error {
+	if a.Filename == "" || strings.ContainsAny(a.Filename, `/\`) || a.Filename == "." || a.Filename == ".." {
+		return fmt.Errorf("filename %q 必须是单个文件名", a.Filename)
+	}
+	if !strings.HasPrefix(a.URL, "https://") {
+		return fmt.Errorf("url %q 必须使用 https", a.URL)
+	}
+	if !sha256Pattern.MatchString(a.SHA256) {
+		return fmt.Errorf("sha256 %q 不是 64 位小写十六进制", a.SHA256)
+	}
+	if a.Size <= 0 {
+		return fmt.Errorf("size %d 必须为正数", a.Size)
+	}
+	return nil
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func inspectHost() (hostInfo, error) {
+	info := hostInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		info.GoVersion = "未找到宿主 go"
+		return info, failf(exitHost, "找不到宿主 go 命令：%v；准备阶段需要宿主 Go 运行本入口", err)
+	}
+	abs, err := filepath.Abs(goBin)
+	if err != nil {
+		return info, failf(exitInternal, "无法解析宿主 go 路径 %q：%v", goBin, err)
+	}
+	info.GoBinary = abs
+	version, err := runCapture(abs, "version")
+	if err != nil {
+		return info, failf(exitHost, "宿主 go version 执行失败：%v", err)
+	}
+	info.GoVersion = version
+	goroot, err := runCapture(abs, "env", "GOROOT")
+	if err != nil {
+		return info, failf(exitHost, "宿主 go env GOROOT 执行失败：%v", err)
+	}
+	info.GOROOT = goroot
+	return info, nil
+}
+
+// runCapture 执行命令并返回去掉行尾的 stdout；环境变量中移除 GOROOT，
+// 让被调用的 go 使用自身位置，避免宿主设置影响隔离副本。
+func runCapture(bin string, args ...string) (string, error) {
+	cmd := exec.Command(bin, args...)
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GOROOT=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "GOTOOLCHAIN=local")
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return "", fmt.Errorf("%v：%s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func prepareOne(kind string, a artifact, name string, lock *lockFile, downloadDir, toolchainDir, manifestDir string, force, quiet bool) (*install, error) {
+	finalDir := filepath.Join(toolchainDir, name)
+	manifestPath := filepath.Join(manifestDir, name+".json")
+
+	if _, err := os.Stat(finalDir); err == nil {
+		inst, err := verifyExisting(finalDir, manifestPath, kind, name, a, lock)
+		if err == nil {
+			if !quiet {
+				fmt.Printf("复用已准备的 %s：%s\n", kindLabel(kind), finalDir)
+			}
+			return inst, nil
+		}
+		if !force {
+			return nil, failf(exitVerify, "%s 目录 %s 不能复用：%v。删除该目录或加 --force 重新准备。", kindLabel(kind), finalDir, err)
+		}
+		if !quiet {
+			fmt.Printf("丢弃不可复用的 %s 目录 %s：%v\n", kindLabel(kind), finalDir, err)
+		}
+		if err := os.RemoveAll(finalDir); err != nil {
+			return nil, failf(exitFS, "无法删除目录 %s：%v", finalDir, err)
+		}
+		if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+			return nil, failf(exitFS, "无法删除清单 %s：%v", manifestPath, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, failf(exitFS, "无法检查目录 %s：%v", finalDir, err)
+	}
+
+	archivePath, downloaded, err := ensureArchive(a, downloadDir, force, quiet)
+	if err != nil {
+		return nil, err
+	}
+	if !downloaded && !quiet {
+		fmt.Printf("复用已校验的下载：%s\n", archivePath)
+	}
+
+	staging := finalDir + ".partial"
+	if err := os.RemoveAll(staging); err != nil {
+		return nil, failf(exitFS, "无法清理临时目录 %s：%v", staging, err)
+	}
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		return nil, failf(exitFS, "无法创建临时目录 %s：%v", staging, err)
+	}
+	if err := extractTarGz(archivePath, staging); err != nil {
+		os.RemoveAll(staging)
+		return nil, failf(exitFS, "解压 %s 失败：%v", archivePath, err)
+	}
+	root := filepath.Join(staging, "go")
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		os.RemoveAll(staging)
+		return nil, failf(exitVerify, "压缩包 %s 中没有顶层的 go/ 目录", archivePath)
+	}
+	tools, stamp, err := verifyTree(kind, root, lock)
+	if err != nil {
+		os.RemoveAll(staging)
+		return nil, err
+	}
+	if err := os.Rename(root, finalDir); err != nil {
+		os.RemoveAll(staging)
+		return nil, failf(exitFS, "无法把 %s 发布为 %s：%v", root, finalDir, err)
+	}
+	os.RemoveAll(staging)
+	for name, path := range tools {
+		tools[name] = finalDir + strings.TrimPrefix(path, root)
+	}
+
+	mf := manifest{
+		SchemaVersion: 1,
+		Name:          name,
+		Kind:          kind,
+		Version:       lock.Go.Version,
+		VersionStamp:  stamp,
+		Target:        lock.Targets.Host,
+		Archive:       a,
+		InstalledAt:   time.Now().Format(time.RFC3339),
+		Tools:         tools,
+	}
+	if err := writeJSON(manifestPath, mf); err != nil {
+		return nil, err
+	}
+	if !quiet {
+		fmt.Printf("已准备 %s：%s\n", kindLabel(kind), finalDir)
+	}
+	return &install{Kind: kind, Name: name, Dir: finalDir, Version: lock.Go.Version, Stamp: stamp, Target: lock.Targets.Host, Archive: a, Tools: tools, Reused: false, Verified: true}, nil
+}
+
+func verifyExisting(finalDir, manifestPath, kind, name string, a artifact, lock *lockFile) (*install, error) {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("缺少安装清单，目录不完整")
+		}
+		return nil, err
+	}
+	var mf manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, fmt.Errorf("安装清单不可解析：%v", err)
+	}
+	if mf.SchemaVersion != 1 || mf.Name != name || mf.Kind != kind {
+		return nil, fmt.Errorf("安装清单与目标不符（name=%q kind=%q）", mf.Name, mf.Kind)
+	}
+	if mf.Version != lock.Go.Version {
+		return nil, fmt.Errorf("已安装版本 %s 与锁定版本 %s 不同", mf.Version, lock.Go.Version)
+	}
+	if mf.Archive.SHA256 != a.SHA256 || mf.Archive.Filename != a.Filename {
+		return nil, fmt.Errorf("已安装内容来自 %s（sha256 %s），与锁文件 %s 不同", mf.Archive.Filename, shortSHA(mf.Archive.SHA256), a.Filename)
+	}
+	tools, stamp, err := verifyTree(kind, finalDir, lock)
+	if err != nil {
+		return nil, err
+	}
+	mf.Tools = tools
+	mf.VersionStamp = stamp
+	if err := writeJSON(manifestPath, mf); err != nil {
+		return nil, err
+	}
+	return &install{Kind: kind, Name: name, Dir: finalDir, Version: lock.Go.Version, Stamp: stamp, Target: lock.Targets.Host, Archive: a, Tools: tools, Reused: true, Verified: true}, nil
+}
+
+// verifyTree 检查解压结果是否真的是锁定的那份内容，而不只看目录是否存在。
+func verifyTree(kind, dir string, lock *lockFile) (map[string]string, string, error) {
+	version, stamp, err := readVersionFile(filepath.Join(dir, "VERSION"))
+	if err != nil {
+		return nil, "", err
+	}
+	if version != lock.Go.Version {
+		return nil, "", failf(exitVerify, "%s 首行为 %q，与锁定版本 %s 不同", filepath.Join(dir, "VERSION"), version, lock.Go.Version)
+	}
+	licensePath := filepath.Join(dir, lock.Go.LicenseFile)
+	if _, err := os.Stat(licensePath); err != nil {
+		return nil, "", failf(exitVerify, "缺少许可证文件 %s：%v", licensePath, err)
+	}
+
+	switch kind {
+	case "sdk":
+		toolDir := filepath.Join(dir, "pkg", "tool", strings.ReplaceAll(lock.Targets.Host, "/", "_"))
+		tools := map[string]string{}
+		for _, name := range []string{"compile", "link", "asm"} {
+			p := filepath.Join(toolDir, name)
+			if info, err := os.Stat(p); err != nil || info.IsDir() {
+				return nil, "", failf(exitVerify, "SDK 缺少工具 %s", p)
+			}
+			tools[name] = p
+		}
+		goBin := filepath.Join(dir, "bin", "go")
+		if info, err := os.Stat(goBin); err != nil || info.IsDir() {
+			return nil, "", failf(exitVerify, "SDK 缺少 %s", goBin)
+		}
+		tools["go"] = goBin
+		out, err := runCapture(goBin, "version")
+		if err != nil {
+			return nil, "", failf(exitVerify, "%s version 执行失败：%v", goBin, err)
+		}
+		want := fmt.Sprintf("go version %s %s", lock.Go.Version, lock.Targets.Host)
+		if out != want {
+			return nil, "", failf(exitVerify, "隔离 SDK 版本为 %q，期望 %q", out, want)
+		}
+		return tools, stamp, nil
+	case "src":
+		for _, rel := range []string{"src/cmd/compile", "src/cmd/link", "src/runtime"} {
+			if info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil || !info.IsDir() {
+				return nil, "", failf(exitVerify, "源码树缺少目录 %s", rel)
+			}
+		}
+		return nil, stamp, nil
+	default:
+		return nil, "", failf(exitInternal, "未知的安装类别 %q", kind)
+	}
+}
+
+// readVersionFile 读取 Go 发行包的 VERSION 文件。首行是版本号，第二行是可选的构建时间。
+func readVersionFile(path string) (version, stamp string, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", failf(exitVerify, "读取 %s 失败：%v", path, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+		return "", "", failf(exitVerify, "%s 为空", path)
+	}
+	version = strings.TrimSpace(lines[0])
+	if len(lines) > 1 {
+		stamp = strings.TrimSpace(lines[1])
+	}
+	return version, stamp, nil
+}
+
+func ensureArchive(a artifact, dir string, force, quiet bool) (string, bool, error) {
+	path := filepath.Join(dir, a.Filename)
+	if force {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return "", false, failf(exitFS, "无法删除缓存 %s：%v", path, err)
+		}
+	}
+	if info, err := os.Stat(path); err == nil {
+		if err := verifyFile(path, a, info.Size()); err != nil {
+			return "", false, failf(exitHash, "缓存文件 %s 校验失败：%v。删除该文件或加 --force 重新下载。", path, err)
+		}
+		return path, false, nil
+	} else if !os.IsNotExist(err) {
+		return "", false, failf(exitFS, "无法检查缓存 %s：%v", path, err)
+	}
+
+	if !quiet {
+		fmt.Printf("下载 %s（%.1f MiB）→ %s\n", a.URL, float64(a.Size)/(1<<20), path)
+	}
+	tmp := path + ".partial"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", false, failf(exitFS, "无法创建下载目录 %s：%v", dir, err)
+	}
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", false, failf(exitFS, "无法创建 %s：%v", tmp, err)
+	}
+	defer out.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+	if err != nil {
+		os.Remove(tmp)
+		return "", false, failf(exitNet, "构造下载请求失败：%v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		os.Remove(tmp)
+		return "", false, failf(exitNet, "下载 %s 失败：%v", a.URL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		os.Remove(tmp)
+		return "", false, failf(exitNet, "下载 %s 返回 HTTP %d", a.URL, resp.StatusCode)
+	}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(out, h), resp.Body)
+	if err != nil {
+		os.Remove(tmp)
+		return "", false, failf(exitNet, "读取 %s 的响应失败：%v", a.URL, err)
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return "", false, failf(exitFS, "写入 %s 失败：%v", tmp, err)
+	}
+	if n != a.Size {
+		os.Remove(tmp)
+		return "", false, failf(exitHash, "下载长度 %d 与锁文件 %d 不同", n, a.Size)
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if sum != a.SHA256 {
+		os.Remove(tmp)
+		return "", false, failf(exitHash, "下载内容 sha256 为 %s，与锁文件 %s 不同", sum, a.SHA256)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return "", false, failf(exitFS, "无法发布下载文件 %s：%v", path, err)
+	}
+	if !quiet {
+		fmt.Printf("校验 %s 通过（sha256 %s）\n", a.Filename, shortSHA(a.SHA256))
+	}
+	return path, true, nil
+}
+
+// verifyPatchFiles 检查锁文件登记的接入文件存在且内容匹配。首版补丁列表为空，
+// 该函数在 01.05 加入 overlay 或补丁后开始生效。
+func verifyPatchFiles(root string, lock *lockFile) ([]string, error) {
+	paths := make([]string, 0, len(lock.Bridge.PatchFiles))
+	for _, p := range lock.Bridge.PatchFiles {
+		path := filepath.Join(root, filepath.FromSlash(p.Path))
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, failf(exitVerify, "接入文件 %s 不可访问：%v", p.Path, err)
+		}
+		if info.IsDir() {
+			return nil, failf(exitVerify, "接入文件 %s 是目录", p.Path)
+		}
+		sum, err := fileSHA256(path)
+		if err != nil {
+			return nil, failf(exitFS, "读取接入文件 %s 失败：%v", p.Path, err)
+		}
+		if sum != p.SHA256 {
+			return nil, failf(exitVerify, "接入文件 %s 的 sha256 为 %s，与锁文件 %s 不同", p.Path, sum, p.SHA256)
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func verifyFile(path string, a artifact, size int64) error {
+	if size != a.Size {
+		return fmt.Errorf("文件大小 %d 与锁文件 %d 不同", size, a.Size)
+	}
+	sum, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
+	if sum != a.SHA256 {
+		return fmt.Errorf("sha256 为 %s，与锁文件 %s 不同", sum, a.SHA256)
+	}
+	return nil
+}
+
+func extractTarGz(archivePath, dst string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("不是有效的 gzip 文件：%w", err)
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("读取归档条目失败：%w", err)
+		}
+		name := filepath.Clean(filepath.FromSlash(hdr.Name))
+		if name == "." {
+			continue
+		}
+		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("归档条目 %q 越出目标目录", hdr.Name)
+		}
+		target := filepath.Join(dst, name)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			w, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode).Perm())
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(w, tr); err != nil {
+				w.Close()
+				return err
+			}
+			if err := w.Close(); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if filepath.IsAbs(hdr.Linkname) {
+				return fmt.Errorf("归档条目 %q 的符号链接指向绝对路径", hdr.Name)
+			}
+			rel := filepath.Clean(filepath.Join(filepath.Dir(name), filepath.FromSlash(hdr.Linkname)))
+			if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+				return fmt.Errorf("归档条目 %q 的符号链接越出目标目录", hdr.Name)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(hdr.Linkname, target); err != nil {
+				return err
+			}
+		default:
+			// 其他类型不写入目标目录。
+		}
+	}
+}
+
+func checkRemoteTag(lock *lockFile) error {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return failf(exitNet, "找不到 git，无法复核远程标签：%v", err)
+	}
+	cmd := exec.Command(git, "ls-remote", "--tags", "https://github.com/golang/go", lock.Go.SourceTag)
+	out, err := cmd.Output()
+	if err != nil {
+		return failf(exitNet, "git ls-remote 失败：%v", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 1 {
+		return failf(exitVerify, "远程没有标签 %s", lock.Go.SourceTag)
+	}
+	if fields[0] != lock.Go.SourceCommit {
+		return failf(exitVerify, "标签 %s 在远程指向 %s，锁文件记录 %s", lock.Go.SourceTag, fields[0], lock.Go.SourceCommit)
+	}
+	return nil
+}
+
+func writeJSON(path string, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return failf(exitInternal, "无法序列化 %s：%v", path, err)
+	}
+	data = append(data, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return failf(exitFS, "无法写入 %s：%v", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return failf(exitFS, "无法发布 %s：%v", path, err)
+	}
+	return nil
+}
+
+func printSummary(rep *report, reportPath string, lock *lockFile) {
+	fmt.Println()
+	fmt.Printf("工具链准备完成：%s（%s）\n", lock.Go.Version, lock.Targets.Host)
+	fmt.Printf("  锁文件提交    %s（tag %s，许可证 %s）\n", lock.Go.SourceCommit, lock.Go.SourceTag, lock.Go.License)
+	for _, inst := range rep.Installs {
+		state := "新准备"
+		if inst.Reused {
+			state = "已存在并复核"
+		}
+		stamp := ""
+		if inst.Stamp != "" {
+			stamp = "，" + inst.Stamp
+		}
+		fmt.Printf("  %-4s 目录   %s（%s%s）\n", kindLabel(inst.Kind), inst.Dir, state, stamp)
+		keys := make([]string, 0, len(inst.Tools))
+		for k := range inst.Tools {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("    %-8s %s\n", k, inst.Tools[k])
+		}
+	}
+	fmt.Printf("  宿主 Go       %s（%s，未修改，GOROOT %s）\n", rep.Host.GoBinary, rep.Host.GoVersion, rep.Host.GOROOT)
+	fmt.Printf("  报告          %s\n", reportPath)
+	if sdk := rep.Installs[0]; sdk.Kind == "sdk" {
+		fmt.Println()
+		fmt.Println("只在需要的 shell 中显式启用隔离工具链：")
+		fmt.Printf("  export GOROOT=%q\n", sdk.Dir)
+		fmt.Printf("  export PATH=%q:$PATH\n", filepath.Join(sdk.Dir, "bin"))
+	}
+}
+
+func kindLabel(kind string) string {
+	if kind == "sdk" {
+		return "SDK"
+	}
+	return "源码"
+}
+
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}

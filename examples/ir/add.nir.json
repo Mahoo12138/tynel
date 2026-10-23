@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "add",
+      "params": [
+        {
+          "name": "a",
+          "type": "number"
+        },
+        {
+          "name": "b",
+          "type": "number"
+        }
+      ],
+      "result": "number",
+      "body": [
+        {
+          "op": "return",
+          "value": {
+            "op": "binary",
+            "operator": "+",
+            "left": {
+              "op": "param",
+              "name": "a"
+            },
+            "right": {
+              "op": "param",
+              "name": "b"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "params": [],
+      "result": "void",
+      "body": [
+        {
+          "op": "print",
+          "value": {
+            "op": "call",
+            "function": "add",
+            "args": [
+              {
+                "op": "number",
+                "bits": "0x4044000000000000"
+              },
+              {
+                "op": "number",
+                "bits": "0x4000000000000000"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -57,6 +57,8 @@ cd tynel
 
 `bin/tynel` 不进入版本库。命令、退出状态和职责划分见[命令行参考](reference/cli.md)。
 
+中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，目前没有命令行入口可以直接读它；往返一致、特殊值位模式和预算限制都由 `./tools/test` 里的 `compiler/nir` 用例检查。
+
 ## 生成了什么
 
 | 路径 | 内容 | 能否重建 |

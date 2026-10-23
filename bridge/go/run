@@ -1,0 +1,48 @@
+#!/bin/zsh
+# 用修改版编译器把一份 NIR 编成原生程序，并运行它。
+#
+# 用法：./bridge/go/run <file.nir.json> [输出路径]
+#
+# 编译对象是固定的支持包 bridge/go/support；用户函数由 bridge 从 NIR 注入，
+# 不生成任何 Go 源码。
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+if (( $# < 1 )); then
+  print -u2 -- "用法：./bridge/go/run <file.nir.json> [输出路径]"
+  exit 2
+fi
+
+NIR=$1
+OUT=${2:-"$ROOT/.work/bridge/out/app"}
+
+SDK=$(ls -d "$ROOT"/.work/toolchain/go*-sdk-* 2>/dev/null | head -1)
+COMPILE="$ROOT/.work/bridge/compile"
+if [[ -z "$SDK" ]]; then
+  print -u2 -- "找不到隔离 Go SDK；先在项目根运行 ./tools/toolchain/prep"
+  exit 1
+fi
+if [[ ! -x "$COMPILE" ]]; then
+  print -u2 -- "找不到修改版编译器；先运行 ./bridge/go/build"
+  exit 1
+fi
+if [[ ! -f "$NIR" ]]; then
+  print -u2 -- "找不到 NIR 文件：$NIR"
+  exit 1
+fi
+
+mkdir -p "$(dirname "$OUT")"
+
+# Go 的构建缓存既不含 NIR 内容，也不含被 toolexec 替换掉的编译器身份。
+# 把两者的哈希都放进 build tag，换输入或换 bridge 都不会命中旧对象。
+TAG="tynel_$(shasum -a 256 "$NIR" | cut -c1-8)_$(shasum -a 256 "$COMPILE" | cut -c1-8)"
+
+cd "$ROOT"
+TYNEL_NIR="$NIR" TYNEL_COMPILE="$COMPILE" "$SDK/bin/go" build \
+  -toolexec="$ROOT/bridge/go/toolexec" \
+  -tags "tynelapp $TAG" \
+  -o "$OUT" \
+  "$ROOT/bridge/go/support"
+
+print -- "已生成 $OUT" >&2
+exec "$OUT"

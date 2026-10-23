@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "result": "void",
+      "body": [
+        {
+          "op": "print",
+          "value": {
+            "op": "call",
+            "function": "missing",
+            "args": [
+              {
+                "op": "number",
+                "bits": "0x4044000000000000"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

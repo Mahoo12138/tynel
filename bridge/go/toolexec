@@ -1,0 +1,12 @@
+#!/bin/sh
+# go build 的工具包装：只把 compile 换成修改版，其余工具原样转交。
+#
+# 环境变量 TYNEL_COMPILE 指向修改后的 compile 二进制。
+tool=$1
+shift
+case "$tool" in
+*/compile)
+	exec "${TYNEL_COMPILE:?TYNEL_COMPILE 未设置}" "$@"
+	;;
+esac
+exec "$tool" "$@"

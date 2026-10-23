@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "result": "void",
+      "body": []
+    }
+  ]
+}

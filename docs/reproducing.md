@@ -57,6 +57,21 @@ cd tynel
 
 `bin/tynel` 不进入版本库。命令、退出状态和职责划分见[命令行参考](reference/cli.md)。
 
+## bridge：从 NIR 到原生程序
+
+```zsh
+# 构建修改版 Go 编译器；只加一个注入钩子，SDK 目录不被修改。
+./bridge/go/build
+
+# 编译并运行一份 NIR，预期输出 42。
+./bridge/go/run examples/ir/add.nir.json
+
+# 受控测试驱动：加法、空入口、坏 NIR、普通构建、缺支持函数五个用例。
+./bridge/go/check
+```
+
+`bridge/go/run` 通过 `-toolexec` 替换 `compile`，用 `TYNEL_NIR` 指定输入；不生成任何 Go 源码。实现细节见 [bridge 说明](reference/bridge.md)。
+
 中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，目前没有命令行入口可以直接读它；往返一致、特殊值位模式、预算限制和语义规则（入口签名、引用、实参、返回类型）都由 `./tools/test` 里的 `compiler/nir` 用例检查。
 
 ## 生成了什么

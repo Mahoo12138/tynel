@@ -86,9 +86,12 @@
             "01.04"
           ],
           "planSection": "PLAN.md#task-01-05",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/bridge.md",
+            "docs/validation/01-05-bridge.md"
+          ]
         },
         {
           "id": "01.06",

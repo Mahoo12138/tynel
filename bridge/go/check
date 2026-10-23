@@ -1,0 +1,70 @@
+#!/bin/zsh
+# 受控测试驱动：验证 bridge 的正常路径和错误路径。
+#
+# 需要先运行 ./bridge/go/build 生成修改版编译器。
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+SDK=$(ls -d "$ROOT"/.work/toolchain/go*-sdk-* 2>/dev/null | head -1)
+COMPILE="$ROOT/.work/bridge/compile"
+OUT="$ROOT/.work/bridge/out"
+FAILED=0
+
+if [[ -z "$SDK" ]]; then
+  print -u2 -- "找不到隔离 Go SDK；先在项目根运行 ./tools/toolchain/prep"
+  exit 1
+fi
+if [[ ! -x "$COMPILE" ]]; then
+  print -u2 -- "找不到修改版编译器；先运行 ./bridge/go/build"
+  exit 1
+fi
+mkdir -p "$OUT"
+
+pass() { print -- "PASS $1" }
+fail() {
+  print -u2 -- "FAIL $1"
+  FAILED=1
+}
+
+# 1. 加法：真实计算并输出 42。
+if out=$("$ROOT/bridge/go/run" "$ROOT/examples/ir/add.nir.json" "$OUT/add" 2>/dev/null) && [[ "$out" == "42" ]]; then
+  pass "加法输出 42"
+else
+  fail "加法输出 \"${out-}\"，期望 42"
+fi
+
+# 2. 空入口：被建成可执行函数，运行时无输出。
+if "$ROOT/bridge/go/run" "$ROOT/bridge/go/testdata/empty.nir.json" "$OUT/empty" >"$OUT/empty.out" 2>/dev/null && [[ ! -s "$OUT/empty.out" ]]; then
+  pass "空入口可执行且无输出"
+else
+  fail "空入口不可执行或产生了输出"
+fi
+
+# 3. 坏 NIR：调用不存在的函数，必须在编译期被拒绝。
+if msg=$("$ROOT/bridge/go/run" "$ROOT/bridge/go/testdata/bad-call.nir.json" "$OUT/bad" 2>&1); then
+  fail "坏 NIR 竟然构建成功"
+elif [[ "$msg" == *"tynel bridge"*"不存在的函数"* ]]; then
+  pass "坏 NIR 在编译期被拒绝"
+else
+  fail "坏 NIR 的错误信息不符：$msg"
+fi
+
+# 4. 普通构建：不设置 TYNEL_NIR 时，替换编译器不改变行为。
+if out=$(TYNEL_COMPILE="$COMPILE" "$SDK/bin/go" run -toolexec="$ROOT/bridge/go/toolexec" "$ROOT/bridge/go/testdata/hello" 2>&1) && [[ "$out" == "hello" ]]; then
+  pass "普通构建不受影响"
+else
+  fail "普通构建输出 \"${out-}\""
+fi
+
+# 5. 支持签名不对：缺少 tynelPrintFloat64 时必须拒绝。
+if msg=$(TYNEL_NIR="$ROOT/examples/ir/add.nir.json" TYNEL_COMPILE="$COMPILE" "$SDK/bin/go" build \
+  -toolexec="$ROOT/bridge/go/toolexec" -tags "tynel_missing_$$" -o "$OUT/missing" \
+  "$ROOT/bridge/go/testdata/support-missing" 2>&1); then
+  fail "缺少支持函数竟然构建成功"
+elif [[ "$msg" == *"缺少固定支持函数"* ]]; then
+  pass "缺少支持函数被拒绝"
+else
+  fail "缺支持函数的错误信息不符：$msg"
+fi
+
+exit $FAILED

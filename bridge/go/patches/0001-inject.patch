@@ -1,0 +1,14 @@
+--- a/cmd/compile/internal/gc/main.go
++++ b/cmd/compile/internal/gc/main.go
+@@ -280,6 +280,11 @@
+ 	// and doesn't benefit from dead-coding or inlining.
+ 	symABIs.GenABIWrappers()
+ 
++	// Tynel：在 inlining 与包装器生成之后把 NIR 构造成高层 IR 节点。放在这里
++	// 可以避开 unified IR 的函数体序列化（新建函数没有 bodyReader），也不会
++	// 干扰普通构建：未设置 TYNEL_NIR 时立即返回。
++	tynelInject(typecheck.Target)
++
+ 	deadlocals.Funcs(typecheck.Target.Funcs)
+ 
+ 	// Escape analysis.

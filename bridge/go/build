@@ -1,0 +1,36 @@
+#!/bin/zsh
+# 构建修改版 Go 编译器：只加一个注入钩子，输出到 .work/bridge/compile。
+#
+# 做法是把补丁应用到 SDK 源码的一份临时副本上，再用 overlay 让 go build 读到
+# 打过补丁的 main.go 和 bridge 文件。SDK 目录本身不被修改。
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+SDK=$(ls -d "$ROOT"/.work/toolchain/go*-sdk-* 2>/dev/null | head -1)
+if [[ -z "$SDK" ]]; then
+  print -u2 -- "找不到隔离 Go SDK；先在项目根运行 ./tools/toolchain/prep"
+  exit 1
+fi
+SRC="$SDK/src"
+WORK="$ROOT/.work/bridge"
+mkdir -p "$WORK/gen"
+
+# 1. 用补丁生成打过补丁的 main.go。补丁只加一处调用，不改原有逻辑。
+cp "$SRC/cmd/compile/internal/gc/main.go" "$WORK/gen/main.go"
+patch -s -p1 -d "$SRC" -o "$WORK/gen/main.go" < "$ROOT/bridge/go/patches/0001-inject.patch"
+
+# 2. 生成 overlay：把 gc 包里的两个文件指到仓库内版本。
+python3 - "$ROOT" "$SDK" <<'PY' > "$WORK/overlay.json"
+import json, sys
+root, sdk = sys.argv[1], sys.argv[2]
+gc = f"{sdk}/src/cmd/compile/internal/gc"
+print(json.dumps({"Replace": {
+    f"{gc}/main.go": f"{root}/.work/bridge/gen/main.go",
+    f"{gc}/tynel_bridge.go": f"{root}/bridge/go/gc/tynel_bridge.go",
+}}, indent=2))
+PY
+
+# 3. 构建编译器本身。
+cd "$SRC"
+"$SDK/bin/go" build -tags tynelgc -overlay="$WORK/overlay.json" -o "$WORK/compile" cmd/compile
+print -- "已生成 $WORK/compile"

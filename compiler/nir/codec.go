@@ -154,8 +154,8 @@ func SaveFile(path string, module *Module) error {
 	return nil
 }
 
-// check 检查格式层面的合法性：版本、必填字段、按 op 允许的字段、位串和预算。
-// 它不看引用是否解析得到、参数数量是否匹配，那些属于 01.04 的验证器。
+// check 检查格式层面的合法性：版本、必填字段、按 op 允许的字段、位串、预算，
+// 以及表达式是否为树。引用、参数数量和类型一致性由 Verify 负责。
 func (m *Module) check(limits Limits) error {
 	if m.SchemaVersion != SchemaVersion {
 		return badf("nir.version", "schemaVersion 为 %d，本版本只接受 %d", m.SchemaVersion, SchemaVersion)
@@ -226,11 +226,18 @@ func checkExpr(root *Expr, rootPath string, depth int, nodes *int, limits Limits
 		path  string
 		depth int
 	}
+	seen := make(map[*Expr]bool)
 	stack := []item{{root, rootPath, depth}}
 	for len(stack) > 0 {
 		it := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		e := it.expr
+		if seen[e] {
+			// 表达式必须是树。共享节点在写回文件时会被复制成两份，循环节点会
+			// 让任何遍历都不终止，两者都拒绝。
+			return badf("nir.cycle", "%s 重复引用了同一个节点（共享或循环）", it.path)
+		}
+		seen[e] = true
 		*nodes++
 		if it.depth > limits.MaxDepth {
 			return badf("nir.budget", "%s 的嵌套深度超过预算 %d", it.path, limits.MaxDepth)

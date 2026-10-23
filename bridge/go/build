@@ -20,7 +20,7 @@ cp "$SRC/cmd/compile/internal/gc/main.go" "$WORK/gen/main.go"
 patch -s -p1 -d "$SRC" -o "$WORK/gen/main.go" < "$ROOT/bridge/go/patches/0001-inject.patch"
 
 # 2. 生成 overlay：把 gc 包里的两个文件指到仓库内版本。
-python3 - "$ROOT" "$SDK" <<'PY' > "$WORK/overlay.json"
+python3 - "$ROOT" "$SDK" <<'PY' >"$WORK/overlay.json"
 import json, sys
 root, sdk = sys.argv[1], sys.argv[2]
 gc = f"{sdk}/src/cmd/compile/internal/gc"
@@ -33,4 +33,37 @@ PY
 # 3. 构建编译器本身。
 cd "$SRC"
 "$SDK/bin/go" build -tags tynelgc -overlay="$WORK/overlay.json" -o "$WORK/compile" cmd/compile
-print -- "已生成 $WORK/compile"
+
+# 4. 写戳记：记录编译器本身、bridge 源码和 SDK 源码的哈希。构建 NIR 时据此
+#    判断编译器是否过期，过期就拒绝构建，避免用旧 bridge 生成产物。
+python3 - "$ROOT" "$SDK" "$WORK" <<'PY'
+import hashlib, json, os, sys, time
+root, sdk, work = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+sources = {
+    "bridge/go/gc/tynel_bridge.go": sha(os.path.join(root, "bridge/go/gc/tynel_bridge.go")),
+    "bridge/go/patches/0001-inject.patch": sha(os.path.join(root, "bridge/go/patches/0001-inject.patch")),
+    "sdk/cmd/compile/internal/gc/main.go": sha(os.path.join(sdk, "src/cmd/compile/internal/gc/main.go")),
+}
+with open(os.path.join(sdk, "VERSION")) as f:
+    version = f.read().splitlines()[0]
+stamp = {
+    "schemaVersion": 1,
+    "compilerSHA256": sha(os.path.join(work, "compile")),
+    "sdkVersion": version,
+    "builtAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    "sources": sources,
+}
+with open(os.path.join(work, "stamp.json"), "w") as f:
+    json.dump(stamp, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
+
+print -- "已生成 $WORK/compile（戳记 $WORK/stamp.json）"

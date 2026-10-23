@@ -72,6 +72,21 @@ cd tynel
 
 `bridge/go/run` 通过 `-toolexec` 替换 `compile`，用 `TYNEL_NIR` 指定输入；不生成任何 Go 源码。实现细节见 [bridge 说明](reference/bridge.md)。
 
+正式入口是 `tynel build-ir`，它多了输入快照、临时输出后发布和构建记录：
+
+```zsh
+# 编译并发布到指定路径；失败不会覆盖已有产物。
+./bin/tynel build-ir examples/ir/add.nir.json -o out/add
+
+# 运行生成物。
+./out/add
+
+# 查看这次构建的输入、工具与产物哈希。
+cat out/add.build.json
+```
+
+命令、选项和退出状态见[命令行参考](reference/cli.md)。
+
 中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，目前没有命令行入口可以直接读它；往返一致、特殊值位模式、预算限制和语义规则（入口签名、引用、实参、返回类型）都由 `./tools/test` 里的 `compiler/nir` 用例检查。
 
 ## 生成了什么

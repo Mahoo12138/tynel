@@ -17,6 +17,7 @@ const usageText = `tynel 是 TypeScript 到原生二进制的编译器。
   help [命令]           显示总体帮助或某个命令的说明
   toolchain             显示锁定工具链和各工具的实际路径（开发命令）
   toolchain which <名>  显示单个工具的路径（开发命令）
+  build-ir <NIR> -o <路径>  把 NIR 编成原生程序（开发命令）
 
 退出状态：
   0  成功
@@ -26,7 +27,7 @@ const usageText = `tynel 是 TypeScript 到原生二进制的编译器。
   4  环境缺失
   5  内部故障
 
-build、check、run 尚未实现；当前版本只能显示身份并检查工具链。
+build、check、run 尚未实现；NIR 可以用 build-ir 直接编成原生程序。
 `
 
 var topicHelp = map[string]string{
@@ -39,6 +40,14 @@ var topicHelp = map[string]string{
 
 不带参数时输出总体用法。带命令名时输出该命令的说明；
 未知命令名按用法错误退出。
+`,
+	"build-ir": `tynel build-ir <NIR> -o <路径>
+
+读取一份 NIR 文件，用修改版 Go 编译器编成原生程序。构建前先解码并验证
+NIR；产物先写到目标目录的临时文件，成功后才改名发布，失败不会覆盖已有
+的产物。构建本身不运行程序。
+
+成功后在产物旁边写一份 <产物>.build.json，记录输入、工具和输出的哈希。
 `,
 	"toolchain": `tynel toolchain
 tynel toolchain which <名>

@@ -25,6 +25,9 @@ type Runner interface {
 	// Run 启动工具并等待结束。只有无法启动才返回 error；
 	// 进程以非零状态退出时，状态记录在 Output.ExitCode。
 	Run(name string, args ...string) (Output, error)
+	// RunEnv 与 Run 相同，但用给定环境变量替换当前进程环境；env 为 nil
+	// 表示继承当前环境。
+	RunEnv(env []string, name string, args ...string) (Output, error)
 }
 
 // Exec 是用真实操作系统进程实现的 Runner。
@@ -34,8 +37,14 @@ type Exec struct{}
 func (Exec) LookPath(name string) (string, error) { return exec.LookPath(name) }
 
 // Run 启动外部进程并收集输出。非零退出不算 error。
-func (Exec) Run(name string, args ...string) (Output, error) {
+func (e Exec) Run(name string, args ...string) (Output, error) {
+	return e.RunEnv(nil, name, args...)
+}
+
+// RunEnv 与 Run 相同，但显式指定环境变量。
+func (Exec) RunEnv(env []string, name string, args ...string) (Output, error) {
 	cmd := exec.Command(name, args...)
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

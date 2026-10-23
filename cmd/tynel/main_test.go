@@ -33,6 +33,10 @@ func (f fakeRunner) Run(string, ...string) (toolchain.Output, error) {
 	return toolchain.Output{}, nil
 }
 
+func (f fakeRunner) RunEnv([]string, string, ...string) (toolchain.Output, error) {
+	return toolchain.Output{}, nil
+}
+
 // newFakeProject 造一个只有锁文件和准备报告的项目根。
 func newFakeProject(t *testing.T) (string, map[string]string) {
 	t.Helper()
@@ -168,6 +172,9 @@ func TestUsageErrors(t *testing.T) {
 		{"toolchain 未知子命令", []string{"toolchain", "show"}},
 		{"toolchain which 缺参数", []string{"toolchain", "which"}},
 		{"toolchain which 未知工具", []string{"toolchain", "which", "nope"}},
+		{"build-ir 缺参数", []string{"build-ir"}},
+		{"build-ir 缺输出", []string{"build-ir", "x.nir.json"}},
+		{"build-ir 未知选项", []string{"build-ir", "-x"}},
 	}
 	for _, c := range cases {
 		var out, errOut bytes.Buffer

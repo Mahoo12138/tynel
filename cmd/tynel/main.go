@@ -53,6 +53,8 @@ func (a *app) dispatch(command string, args []string) error {
 		return a.help(args)
 	case "toolchain":
 		return a.toolchainCommand(args)
+	case "build-ir":
+		return a.buildIR(args)
 	default:
 		return diagnostic.New(diagnostic.Usage, "cli.unknown-command", "未知命令 %q；用 tynel help 查看可用命令", command)
 	}

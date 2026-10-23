@@ -86,7 +86,7 @@ cd tynel
 cat out/add.build.json
 ```
 
-命令、选项和退出状态见[命令行参考](reference/cli.md)。
+命令、选项和退出状态见[命令行参考](reference/cli.md)。完整实验过程见第一篇笔记[一份加法描述怎样成为二进制](notes/01-native-ir.md)。
 
 中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，目前没有命令行入口可以直接读它；往返一致、特殊值位模式、预算限制和语义规则（入口签名、引用、实参、返回类型）都由 `./tools/test` 里的 `compiler/nir` 用例检查。
 

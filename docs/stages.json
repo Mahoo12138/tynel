@@ -18,7 +18,7 @@
       "title": "一份加法描述怎样成为二进制",
       "tag": "mvp/01-native-ir",
       "dependsOn": [],
-      "status": "active",
+      "status": "completed",
       "plannedNote": "docs/notes/01-native-ir.md",
       "goal": "手写 NIR 生成原生 42，并能跟踪编译工具与产物",
       "gateSubnode": "01.08",
@@ -129,9 +129,12 @@
             "01.07"
           ],
           "planSection": "PLAN.md#task-01-08",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/notes/01-native-ir.md",
+            "docs/validation/01-native-ir.md"
+          ]
         }
       ]
     },

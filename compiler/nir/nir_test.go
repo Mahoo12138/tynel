@@ -299,3 +299,36 @@ func TestSaveFileKeepsOldContentOnFailure(t *testing.T) {
 		t.Fatalf("保存后读不回来：%v", err)
 	}
 }
+
+func FuzzDecode(f *testing.F) {
+	seed, err := json.Marshal(minimalModule())
+	if err != nil {
+		f.Fatalf("构造种子失败：%v", err)
+	}
+	f.Add(seed)
+	f.Add([]byte(`{"schemaVersion":1,"entry":"main","functions":[{"name":"main","params":[],"result":"void","body":[]}]}`))
+	f.Add([]byte(`{"schemaVersion":2}`))
+	f.Add([]byte(``))
+	f.Add([]byte(`{"schemaVersion":1,"entry":"main","functions":[{"name":"main","params":[],"result":"void","body":[{"op":"print","value":{"op":"number","bits":"0x7ff8000000000000"}}]}]}`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		module, err := DecodeBytes(data, DefaultLimits())
+		if err != nil {
+			if module != nil {
+				t.Fatal("解码失败时返回了模块")
+			}
+			return
+		}
+		encoded, err := EncodeBytes(module)
+		if err != nil {
+			t.Fatalf("编码已解码的模块失败：%v", err)
+		}
+		again, err := DecodeBytes(encoded, DefaultLimits())
+		if err != nil {
+			t.Fatalf("回读自己写出的内容失败：%v", err)
+		}
+		if !reflect.DeepEqual(*module, *again) {
+			t.Fatal("往返后结构不一致")
+		}
+	})
+}

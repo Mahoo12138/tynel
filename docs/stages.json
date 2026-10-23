@@ -115,9 +115,12 @@
             "01.06"
           ],
           "planSection": "PLAN.md#task-01-07",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/bridge.md",
+            "docs/validation/01-07-native.md"
+          ]
         },
         {
           "id": "01.08",

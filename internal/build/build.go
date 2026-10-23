@@ -110,7 +110,15 @@ func Run(opts Options, runner toolchain.Runner) (*Record, error) {
 		return nil, diagnostic.New(diagnostic.Environment, "build.snapshot-failed", "无法创建快照目录").WithDetail(err.Error())
 	}
 	snapshot := filepath.Join(snapshotDir, inputSHA[:16]+".nir.json")
-	if err := os.WriteFile(snapshot, data, 0o644); err != nil {
+	if existing, err := os.ReadFile(snapshot); err == nil {
+		// 快照按内容哈希命名。名字对得上但内容对不上，说明它被别的程序改过，
+		// 这时宁可停下，也不要悄悄覆盖后继续构建。
+		if sha256Hex(existing) != inputSHA {
+			return nil, diagnostic.New(diagnostic.Environment, "build.snapshot-corrupt", "输入快照 %s 的内容与文件名不符", snapshot)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, diagnostic.New(diagnostic.Environment, "build.snapshot-failed", "无法读取输入快照").WithDetail(err.Error())
+	} else if err := os.WriteFile(snapshot, data, 0o644); err != nil {
 		return nil, diagnostic.New(diagnostic.Environment, "build.snapshot-failed", "无法写入输入快照").WithDetail(err.Error())
 	}
 

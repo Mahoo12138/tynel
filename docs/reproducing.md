@@ -52,6 +52,7 @@ cd tynel
 ./bin/tynel version
 
 # 运行全部 Go 测试；用 -count=1 禁用缓存，只统计真正跑过用例的包。
+# 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
 ```
 

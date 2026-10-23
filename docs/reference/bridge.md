@@ -48,12 +48,24 @@ exec "$tool" "$@"
 
 ## 固定支持文件建立了什么
 
-`bridge/go/support/support.go` 是一个对所有权都相同的 `package main`，只提供两件事：
+`bridge/go/support/support.go` 是一个对所有输入都相同的 `package main`，只提供三件事：
 
 - `tynelPrintFloat64(float64)`：NIR 里 `print` 语句的目标。它用 `fmt.Fprintln` 输出，42 打印成 `42`。
+- `tynelNumberFromBits(uint64) float64`：按位构造 number，供无法用字面量表达的值使用（见下一节）。
 - 包本身是 `main`：这样注入进来的用户函数与它在同一个包里，符号前缀是 `main.`。
 
 它**不**提供 `main` 函数。`main.main` 由 NIR 的入口函数生成；如果支持文件自己写了 `main`，bridge 会因为符号已存在而拒绝。
+
+## 特殊数值怎么生成
+
+`go/constant` 表示不了 NaN 和正负无穷，也会把负零归一成正零。如果所有 `number` 都走 `ir.NewBasicLit`，`print(-0)` 会悄悄变成 `print(0)`，`print(NaN)` 根本编不过。
+
+所以 bridge 分两种情况：
+
+- 有限且不是负零的值，仍然用 `ir.NewBasicLit` 生成字面量。`add(40, 2)` 的反汇编因此是两个字面量加一条 `FADDD`。
+- 负零、NaN、正负无穷改为调用 `tynelNumberFromBits`，把 64 位整数传进去，由 `math.Float64frombits` 在运行时还原位模式。
+
+判断条件是 `math.IsNaN`、`math.IsInf` 或「等于零且符号位为负」。这样 NIR 里保存的位模式与实际执行的数值一致，而不是「看起来是零」。
 
 ## bridge 何时接手
 

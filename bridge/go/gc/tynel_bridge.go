@@ -29,8 +29,11 @@ import (
 	"go/constant"
 )
 
-// supportPrint 是固定支持文件提供的输出函数名。
-const supportPrint = "tynelPrintFloat64"
+// 固定支持文件提供的函数名。
+const (
+	supportPrint = "tynelPrintFloat64"
+	supportBits  = "tynelNumberFromBits"
+)
 
 var binaryOps = map[string]ir.Op{
 	"+": ir.OADD,
@@ -101,9 +104,13 @@ func inject(target *ir.Package, path string) error {
 	if helper == nil {
 		return fmt.Errorf("缺少固定支持函数 %s", supportPrint)
 	}
+	bitsHelper, _ := types.LocalPkg.Lookup(supportBits).Def.(*ir.Name)
+	if bitsHelper == nil {
+		return fmt.Errorf("缺少固定支持函数 %s", supportBits)
+	}
 
 	for _, f := range m.Functions {
-		if err := buildBody(funcs[f.Name], f, funcs, helper, pos); err != nil {
+		if err := buildBody(funcs[f.Name], f, funcs, helper, bitsHelper, pos); err != nil {
 			return err
 		}
 	}
@@ -133,7 +140,7 @@ func signature(f function, pos src.XPos) (*types.Type, error) {
 	return types.NewSignature(nil, params, results), nil
 }
 
-func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper *ir.Name, pos src.XPos) error {
+func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsHelper *ir.Name, pos src.XPos) error {
 	params := make(map[string]*ir.Name, len(f.Params))
 	for i, p := range f.Params {
 		if i >= len(fn.Dcl) {
@@ -150,13 +157,13 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper *ir.Na
 				body = append(body, ir.NewReturnStmt(pos, nil))
 				continue
 			}
-			v, err := buildExpr(s.Value, params, funcs, pos)
+			v, err := buildExpr(s.Value, params, funcs, bitsHelper, pos)
 			if err != nil {
 				return err
 			}
 			body = append(body, ir.NewReturnStmt(pos, []ir.Node{v}))
 		case "print":
-			v, err := buildExpr(s.Value, params, funcs, pos)
+			v, err := buildExpr(s.Value, params, funcs, bitsHelper, pos)
 			if err != nil {
 				return err
 			}
@@ -179,7 +186,7 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper *ir.Na
 	return nil
 }
 
-func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, pos src.XPos) (ir.Node, error) {
+func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, bitsHelper *ir.Name, pos src.XPos) (ir.Node, error) {
 	if e == nil {
 		return nil, fmt.Errorf("表达式为空")
 	}
@@ -189,7 +196,14 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, p
 		if err != nil {
 			return nil, err
 		}
-		return ir.NewBasicLit(pos, types.Types[types.TFLOAT64], constant.MakeFloat64(math.Float64frombits(bits))), nil
+		v := math.Float64frombits(bits)
+		if needsBits(v) {
+			// NaN、无穷和负零没有字面量形式：go/constant 会把负零归一成
+			// 正零，也没有 NaN 和无穷的表示。改成调用按位构造的支持函数。
+			lit := ir.NewBasicLit(pos, types.Types[types.TUINT64], constant.MakeUint64(bits))
+			return ir.NewCallExpr(pos, ir.OCALL, bitsHelper, []ir.Node{lit}), nil
+		}
+		return ir.NewBasicLit(pos, types.Types[types.TFLOAT64], constant.MakeFloat64(v)), nil
 	case "param":
 		n, ok := params[e.Name]
 		if !ok {
@@ -203,7 +217,7 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, p
 		}
 		args := make([]ir.Node, 0, len(e.Args))
 		for i := range e.Args {
-			a, err := buildExpr(&e.Args[i], params, funcs, pos)
+			a, err := buildExpr(&e.Args[i], params, funcs, bitsHelper, pos)
 			if err != nil {
 				return nil, err
 			}
@@ -215,11 +229,11 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, p
 		if !ok {
 			return nil, fmt.Errorf("不支持的运算符 %q", e.Operator)
 		}
-		x, err := buildExpr(e.Left, params, funcs, pos)
+		x, err := buildExpr(e.Left, params, funcs, bitsHelper, pos)
 		if err != nil {
 			return nil, err
 		}
-		y, err := buildExpr(e.Right, params, funcs, pos)
+		y, err := buildExpr(e.Right, params, funcs, bitsHelper, pos)
 		if err != nil {
 			return nil, err
 		}
@@ -227,6 +241,11 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, p
 	default:
 		return nil, fmt.Errorf("不支持的表达式 op %q", e.Op)
 	}
+}
+
+// needsBits 报告一个值是否必须按位构造：负零、NaN 和正负无穷。
+func needsBits(v float64) bool {
+	return math.IsNaN(v) || math.IsInf(v, 0) || (v == 0 && math.Signbit(v))
 }
 
 func parseBits(bits string) (uint64, error) {

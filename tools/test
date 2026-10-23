@@ -9,6 +9,11 @@ if [[ -z "$GO" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$ROOT/.work/bridge/compile" ]]; then
+  print -u2 -- "找不到修改版编译器；先运行 ./bridge/go/build（tests/native 需要它）"
+  exit 1
+fi
+
 cd "$ROOT"
 print -- "使用 $("$GO" version)"
 

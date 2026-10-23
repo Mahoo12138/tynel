@@ -281,6 +281,27 @@ func TestRunAcceptsPathsWithSpaces(t *testing.T) {
 	}
 }
 
+func TestRunRejectsCorruptSnapshot(t *testing.T) {
+	root, runner := newProject(t)
+	runner.writeOutput = true
+	data := exampleNIR(t)
+	input := filepath.Join(root, "add.nir.json")
+	writeFile(t, input, string(data))
+	snapshot := filepath.Join(root, filepath.FromSlash(SnapshotDir), sha256Hex(data)[:16]+".nir.json")
+	writeFile(t, snapshot, "被改动过的内容")
+
+	_, err := Run(Options{Root: root, Input: input, Output: filepath.Join(root, "out", "app")}, runner)
+	if err == nil {
+		t.Fatal("被改动的快照应被拒绝")
+	}
+	if !strings.Contains(err.Error(), "snapshot-corrupt") {
+		t.Fatalf("错误码不是 build.snapshot-corrupt：%v", err)
+	}
+	if runner.calls != 0 {
+		t.Errorf("快照被污染时不应启动构建")
+	}
+}
+
 func TestRunRejectsMissingArguments(t *testing.T) {
 	_, runner := newProject(t)
 	for _, opts := range []Options{{}, {Root: "x"}, {Root: "x", Input: "y"}} {

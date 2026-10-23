@@ -1,0 +1,174 @@
+#!/bin/zsh
+# TypeScript 前端适配的受控测试驱动。
+#
+#   ./bridge/tsgo/check
+#
+# 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误、
+# 外部导入 internal 被拒、源码身份不符被拒、声明库缺失被拒。
+#
+# 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
+# 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+TREE="$ROOT/.work/frontend/typescript-go"
+CONSUMER="$ROOT/bridge/tsgo/consumer"
+WORK="$ROOT/.work/frontend"
+
+# 模块代理：本机访问 proxy.golang.org 会返回 502，默认改用国内镜像；
+# 依赖下载后会进入 .work/frontend/gomodcache，之后可以离线构建。
+export GOPROXY="${TYNEL_GOPROXY:-https://goproxy.cn}"
+export GOSUMDB=off
+export GOMODCACHE="$WORK/gomodcache"
+# 编译缓存用默认位置：它是纯派生数据，放在项目里会让 .work 多出数 GB，
+# 而默认缓存还能和其他 Go 构建共用。
+
+failures=0
+pass() { print -- "  PASS  $1" }
+fail() { print -- "  FAIL  $1"; failures=$((failures + 1)) }
+
+if [[ ! -d "$TREE" ]]; then
+  print -u2 -- "找不到前端源码：$TREE"
+  print -u2 -- "先运行 ./tools/toolchain/prep --frontend-only"
+  exit 1
+fi
+
+# 用隔离 SDK 的 go；没有就退回 PATH 里的 go。
+GO=$(python3 - "$ROOT" <<'PY'
+import json, os, sys
+root = sys.argv[1]
+path = os.path.join(root, ".work/toolchain/toolchain.json")
+try:
+    data = json.load(open(path))
+    for inst in data.get("installs", []):
+        if inst.get("kind") == "sdk":
+            print(inst["tools"]["go"])
+            break
+except Exception:
+    pass
+PY
+)
+if [[ -z "${GO:-}" || ! -x "$GO" ]]; then
+  GO=$(command -v go || true)
+fi
+if [[ -z "${GO:-}" || ! -x "$GO" ]]; then
+  print -u2 -- "找不到可用的 go；先运行 ./tools/toolchain/prep"
+  exit 1
+fi
+print -- "使用 $("$GO" version)"
+
+# 1. 源码身份与适配包副本
+if "$ROOT/tools/toolchain/prep" --verify-only --quiet >/dev/null 2>&1; then
+  pass "前端源码身份与适配包副本一致"
+else
+  fail "前端源码身份或适配包副本不一致"
+fi
+
+# 2. 外部消费者测试：会话创建、关闭规则、诊断内容、快照语义
+if (cd "$CONSUMER" && "$GO" test -count=1 ./... >/dev/null 2>&1); then
+  pass "外部消费者测试通过"
+else
+  fail "外部消费者测试失败"
+fi
+
+# 编译一次宿主，后面反复运行，避免每次都走 go run。
+BIN="$WORK/bin/consumer"
+mkdir -p "$WORK/bin"
+if ! (cd "$CONSUMER" && "$GO" build -o "$BIN" .); then
+  fail "无法构建外部宿主"
+  print -- "失败 $failures 项"
+  exit 1
+fi
+
+# 3. 干净输入：无诊断，退出 0
+out=$("$BIN" "$ROOT/bridge/tsgo/testdata/add.ts" 2>&1); code=$?
+if [[ $code -eq 0 && "$out" == "[]" ]]; then
+  pass "干净输入没有诊断（退出 0）"
+else
+  fail "干净输入应输出 [] 并退出 0，实际退出 $code：$out"
+fi
+
+# 4. 类型错误：退出 1，带 2322 和位置
+out=$("$BIN" "$ROOT/bridge/tsgo/testdata/bad.ts" 2>&1); code=$?
+if [[ $code -eq 1 ]] && print -- "$out" | grep -q '"code": 2322'; then
+  pass "类型错误以 2322 报告（退出 1）"
+else
+  fail "类型错误应退出 1 并含错误码 2322，实际退出 $code：$out"
+fi
+
+# 5. 外部直接导入 internal 包必须被 Go 的访问规则拒绝
+probe=$(mktemp -d)
+mkdir -p "$probe"
+cat > "$probe/go.mod" <<EOF
+module probe
+
+go 1.27
+
+require github.com/microsoft/typescript-go v0.0.0
+
+replace github.com/microsoft/typescript-go => $TREE
+EOF
+cat > "$probe/main.go" <<'EOF'
+package main
+
+import "github.com/microsoft/typescript-go/internal/compiler"
+
+func main() { _ = compiler.Program{} }
+EOF
+out=$(cd "$probe" && GOFLAGS=-mod=mod "$GO" build ./... 2>&1); code=$?
+if [[ $code -ne 0 ]] && print -- "$out" | grep -q "use of internal package"; then
+  pass "外部导入 internal 包被拒绝"
+else
+  fail "外部导入 internal 包本应失败，实际退出 $code：$out"
+fi
+rm -rf "$probe"
+
+# 6. 源码身份不符：换掉 go.mod 的模块行
+probe=$(mktemp -d)
+mkdir -p "$probe/tools/toolchain" "$probe/.work/frontend/typescript-go"
+cp "$ROOT/tools/toolchain/go.lock.json" "$probe/tools/toolchain/"
+print -- "module github.com/someone/other" > "$probe/.work/frontend/typescript-go/go.mod"
+out=$("$ROOT/tools/toolchain/prep" --project "$probe" --verify-only 2>&1); code=$?
+if [[ $code -eq 8 ]] && print -- "$out" | grep -q "源码身份不符"; then
+  pass "源码身份不符按退出 8 拒绝"
+else
+  fail "源码身份不符应退出 8，实际退出 $code：$out"
+fi
+rm -rf "$probe"
+
+# 7. 声明库缺失：只放标记文件，不放 libs 目录
+probe=$(mktemp -d)
+mkdir -p "$probe/tools/toolchain" "$probe/.work/frontend/typescript-go/internal/compiler"
+cp "$ROOT/tools/toolchain/go.lock.json" "$probe/tools/toolchain/"
+cp "$TREE/go.mod" "$TREE/LICENSE" "$probe/.work/frontend/typescript-go/"
+cp "$TREE/internal/compiler/program.go" "$probe/.work/frontend/typescript-go/internal/compiler/"
+out=$("$ROOT/tools/toolchain/prep" --project "$probe" --verify-only 2>&1); code=$?
+if [[ $code -eq 8 ]] && print -- "$out" | grep -q "lib.es5.d.ts"; then
+  pass "声明库缺失按退出 8 拒绝"
+else
+  fail "声明库缺失应退出 8，实际退出 $code：$out"
+fi
+rm -rf "$probe"
+
+# 8. 声明库不完整：只有 lib.es5.d.ts
+probe=$(mktemp -d)
+mkdir -p "$probe/tools/toolchain" "$probe/.work/frontend/typescript-go/internal/compiler" "$probe/.work/frontend/typescript-go/internal/bundled/libs"
+cp "$ROOT/tools/toolchain/go.lock.json" "$probe/tools/toolchain/"
+cp "$TREE/go.mod" "$TREE/LICENSE" "$probe/.work/frontend/typescript-go/"
+cp "$TREE/internal/compiler/program.go" "$probe/.work/frontend/typescript-go/internal/compiler/"
+cp "$TREE/internal/bundled/libs/lib.es5.d.ts" "$probe/.work/frontend/typescript-go/internal/bundled/libs/"
+out=$("$ROOT/tools/toolchain/prep" --project "$probe" --verify-only 2>&1); code=$?
+if [[ $code -eq 8 ]] && print -- "$out" | grep -q "声明库不完整"; then
+  pass "声明库不完整按退出 8 拒绝"
+else
+  fail "声明库不完整应退出 8，实际退出 $code：$out"
+fi
+rm -rf "$probe"
+
+print -- ""
+if [[ $failures -eq 0 ]]; then
+  print -- "全部通过"
+  exit 0
+fi
+print -- "失败 $failures 项"
+exit 1

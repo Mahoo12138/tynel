@@ -35,5 +35,44 @@
   },
   "bridge": {
     "patchFiles": []
+  },
+  "frontend": {
+    "name": "typescript-go",
+    "repository": "microsoft/typescript-go",
+    "module": "github.com/microsoft/typescript-go",
+    "version": "typescript/v7.0.2",
+    "commit": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+    "license": "Apache-2.0",
+    "licenseFile": "LICENSE",
+    "goDirective": "1.26",
+    "archive": {
+      "filename": "typescript-go-2bd066d8.tar.gz",
+      "url": "https://codeload.github.com/microsoft/typescript-go/tar.gz/2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+      "sha256": "5ccb47dbb3f68cd0da58b71e6f445eee36a50bd3e9f9f330cc23a97b88500119",
+      "size": 20375158
+    },
+    "archiveRoot": "typescript-go-2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+    "markers": [
+      {
+        "path": "go.mod",
+        "sha256": "8b2c958ea48d9e64a9f2cc960625085e6f220c6679570db78db9cf5114c368c2"
+      },
+      {
+        "path": "LICENSE",
+        "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47"
+      },
+      {
+        "path": "internal/compiler/program.go",
+        "sha256": "535a2596d7f4c3dc074d546f4e4f4cd5ff4862d50a0c189b0fbb19790fab76ff"
+      },
+      {
+        "path": "internal/bundled/libs/lib.es5.d.ts",
+        "sha256": "6388847232654d7fcbed7fe89ea511a65ad1f5104b41e905c43f90910e1408b6"
+      }
+    ],
+    "adapter": {
+      "source": "bridge/tsgo/_adapter",
+      "package": "tyneladapter"
+    }
   }
 }

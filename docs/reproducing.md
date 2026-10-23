@@ -1,10 +1,12 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备和 01.02 的构建与测试入口；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge 和 02.01 的前端源码准备；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
-`tools/toolchain` 能按锁文件在 `.work/` 内准备 go1.27.3 的 SDK 与源码，并报告实际使用的 `go`、`compile`、`link`、`asm` 路径。`./tools/build` 生成的 `bin/tynel` 能显示版本与锁定的工具链身份、检查工具是否可用。编译器本身尚未实现：没有 TypeScript 前端、NIR 或代码生成，`tynel build` 仍是未知命令。
+`tools/toolchain` 能按锁文件在 `.work/` 内准备 go1.27.3 的 SDK 与源码，以及 TypeScript 前端的源码树，并报告实际使用的 `go`、`compile`、`link`、`asm` 路径。`./tools/build` 生成的 `bin/tynel` 能显示版本与锁定的工具链身份、检查工具是否可用；`tynel build-ir` 能把 NIR 编成原生程序。
+
+前端目前只能通过 `bridge/tsgo/consumer` 这个外部宿主检查一个 `.ts` 文件，还没有接进 `tynel` 命令：`tynel build` 仍是未知命令，接进主命令要等到 02.07。
 
 ## 前置条件
 
@@ -14,8 +16,8 @@
 | --- | --- | --- |
 | 系统 | Apple Silicon macOS，首版目标为 `darwin/arm64` | `uname -m` 输出 `arm64` |
 | 宿主 Go | go1.24 或更新，用于编译准备入口，并在后续提供源码自举 | `go version` |
-| 网络 | 可访问 `go.dev/dl`；加 `--check-remote` 时还需 `github.com` | 准备命令本身会报告失败原因 |
-| 磁盘 | 项目盘至少 1 GB 空闲，实际占用约 555 MB | `df -h .` |
+| 网络 | 可访问 `go.dev/dl`、`codeload.github.com` 与 Go 模块代理；加 `--check-remote` 时还需 `api.github.com` | 准备命令本身会报告失败原因 |
+| 磁盘 | 项目盘至少 1.5 GB 空闲，实际占用约 1.1 GB（Go 工具链 555 MB、前端源码 332 MB、模块缓存 54 MB） | `df -h .` |
 | Git | 用于取得代码；`--check-remote` 用它复核标签 | `git --version` |
 
 宿主 Go 只承担「编译准备入口」这一件事。准备过程不修改它的安装目录，也不写入全局环境变量。
@@ -36,11 +38,28 @@ cd tynel
 ./tools/toolchain/prep
 ```
 
-加 `--check-remote` 会先用 `git ls-remote` 复核标签 `go1.27.3` 指向的提交是否与锁文件一致，再继续准备。加 `--force` 会丢弃已缓存的下载和不可复用的目录重新来过。
+同一条命令还会准备前端源码（见下一节）。加 `--check-remote` 会复核 Go 标签 `go1.27.3` 与前端标签 `typescript/v7.0.2` 是否仍指向锁文件登记的提交；加 `--force` 会丢弃已缓存的下载和不可复用的目录重新来过。
 
 命令成功后打印各工具的绝对路径。重复执行不会重新下载：它重新校验缓存与目录，确认无误后复用。
 
 也可以直接用 `go run tools/toolchain/prep.go` 准备，但 `go run` 会把子进程的非零退出码统一成 1，脚本判断失败原因时应使用 `./tools/toolchain/prep`。
+
+## 准备前端源码
+
+```zsh
+# 解压 TypeScript 前端源码到 .work/frontend/，校验身份后复制适配包。
+./tools/toolchain/prep --frontend-only
+
+# 只校验已解压的源码与适配包副本：不下载、不解压、不写清单。
+./tools/toolchain/prep --verify-only
+
+# 复核上游标签是否仍指向锁文件登记的提交。
+./tools/toolchain/prep --verify-only --check-remote
+```
+
+`--verify-only` 会检查 `go.mod` 的模块行与 `go` 指令、四个标记文件的 sha256、声明库的数量，以及树里的适配包副本是否与 `bridge/tsgo/_adapter` 逐字节一致。任何一项不符都按退出 8 失败，并指出是哪一项。
+
+前端源码的全部来源信息（仓库、标签、提交、归档哈希、许可证）在[前端适配](reference/frontend.md)里，锁文件是 `tools/toolchain/go.lock.json` 的 `frontend` 段。
 
 ## 构建与测试
 
@@ -88,6 +107,21 @@ cat out/add.build.json
 
 命令、选项和退出状态见[命令行参考](reference/cli.md)。完整实验过程见第一篇笔记[一份加法描述怎样成为二进制](notes/01-native-ir.md)。
 
+## 前端适配：检查一个 TypeScript 文件
+
+```zsh
+# 受控测试驱动：源码身份、消费者测试、干净输入、类型错误、四类拒绝。
+./bridge/tsgo/check
+
+# 手动检查一个文件；诊断以 JSON 输出，有错误级诊断时退出 1。
+cd bridge/tsgo/consumer
+go run . ../testdata/bad.ts
+```
+
+宿主是独立模块，通过 `replace` 指向 `.work/frontend/typescript-go`，只导入 `tyneladapter`，不导入任何 `internal` 包。适配接口、会话规则和源码身份判定见[前端适配](reference/frontend.md)。
+
+`bridge/tsgo/check` 首次运行会下载前端依赖到 `.work/frontend/gomodcache`，之后可以离线构建；默认使用 `https://goproxy.cn`，可用 `TYNEL_GOPROXY` 覆盖。
+
 中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，目前没有命令行入口可以直接读它；往返一致、特殊值位模式、预算限制和语义规则（入口签名、引用、实参、返回类型）都由 `./tools/test` 里的 `compiler/nir` 用例检查。
 
 ## 生成了什么
@@ -99,6 +133,9 @@ cat out/add.build.json
 | `.work/toolchain/go1.27.3-src/` | 解压后的 Go 源码树，供 01.05 接入 bridge 使用 | 能，重新解压 |
 | `.work/toolchain/manifests/` | 每份安装的来源身份与安装时间 | 能，重新准备时重写 |
 | `.work/toolchain/toolchain.json` | 本次准备的报告：锁文件身份、宿主 Go、工具路径、归档校验和 | 能，每次运行重写 |
+| `.work/frontend/typescript-go/` | 解压后的前端源码，含复制进来的 `tyneladapter` | 能，重新解压并同步 |
+| `.work/frontend/gomodcache/` | 前端依赖的模块缓存 | 能，重新下载 |
+| `.work/frontend/manifests/typescript-go.json` | 前端来源身份与适配包文件哈希 | 能，重新准备时重写 |
 | `.work/bin/prep` | 准备入口的编译产物 | 能，包装脚本每次重建 |
 | `bin/tynel` | 开发用的命令行入口 | 能，`./tools/build` 重建 |
 
@@ -130,7 +167,7 @@ go env GOROOT
 | 5 | 下载失败 | 网络中断、HTTP 非 200 | 检查网络后重跑；未完成的下载不会留下半份文件 |
 | 6 | 校验和不符 | 归档损坏、缓存被改动 | 删除该归档后重跑，或加 `--force` |
 | 7 | 文件系统 | 目录不可写、解压失败、空间不足 | 检查权限和剩余空间 |
-| 8 | 完整性校验 | 版本与锁文件不符、目录不完整、接入文件不匹配 | 按提示删除对应目录，或加 `--force` |
+| 8 | 完整性校验 | 版本与锁文件不符、目录不完整、源码身份不符、声明库缺失、接入文件不匹配 | 按提示删除对应目录，或加 `--force` |
 
 几种具体情况：
 
@@ -139,7 +176,8 @@ go env GOROOT
 - 半成品目录：最终目录存在但没有安装清单，或清单与锁文件不符。工具不会猜测目录是否可用，而是停止并提示删除；`--force` 会丢弃后重建。
 - 版本不符：解压出的 `VERSION` 首行与锁文件不同，通常是锁文件与归档不配套。此时应核对锁文件，而不是修改归档。
 - 平台不符：本机只能准备与本机匹配的 SDK。首版只锁定 `darwin/arm64`，Windows 目标尚未纳入。
+- 源码身份不符：前端源码树的模块行、`go` 指令或标记文件哈希与锁文件不同。这通常意味着目录来自另一份归档或被改动过；删除该目录后重新准备，不要改锁文件去迁就它。
 
 ## 尚未覆盖
 
-源码自举编译、修改版编译器的构建在 01.05 进行；tsgo 与声明库的锁定在 02.01 进行；Windows 目标保留在 `deferredTargets` 中，没有可执行的准备命令。本页不提供这些步骤的命令，避免把计划写成已经可用。
+源码快照与错误位置在 02.02 进行，把前端接进 `tynel build` 在 02.07 进行；Windows 目标保留在 `deferredTargets` 中，没有可执行的准备命令。本页不提供这些步骤的命令，避免把计划写成已经可用。

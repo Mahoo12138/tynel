@@ -3,8 +3,9 @@
 #
 #   ./bridge/tsgo/check
 #
-# 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误、
-# 外部导入 internal 被拒、源码身份不符被拒、声明库缺失被拒。
+# 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
+# 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
+# 缺失被拒。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -88,15 +89,36 @@ else
   fail "干净输入应输出 [] 并退出 0，实际退出 $code：$out"
 fi
 
-# 4. 类型错误：退出 1，带 2322 和位置
+# 4. 类型错误：退出 1，带 2322，并且中文注释之后的行列仍然正确
 out=$("$BIN" "$ROOT/bridge/tsgo/testdata/bad.ts" 2>&1); code=$?
 if [[ $code -eq 1 ]] && print -- "$out" | grep -q '"code": 2322'; then
   pass "类型错误以 2322 报告（退出 1）"
 else
   fail "类型错误应退出 1 并含错误码 2322，实际退出 $code：$out"
 fi
+if print -- "$out" | grep -q '"line": 2' && print -- "$out" | grep -q '"column": 7'; then
+  pass "中文注释之后的位置仍是 2:7"
+else
+  fail "中文注释之后的位置应为 2:7，实际：$out"
+fi
 
-# 5. 外部直接导入 internal 包必须被 Go 的访问规则拒绝
+# 5. 截断源码：语法错误，不是崩溃
+out=$("$BIN" "$ROOT/bridge/tsgo/testdata/truncated.ts" 2>&1); code=$?
+if [[ $code -eq 1 ]] && print -- "$out" | grep -q '"severity": "error"'; then
+  pass "截断源码报语法错误（退出 1）"
+else
+  fail "截断源码应退出 1 并带 error 级诊断，实际退出 $code：$out"
+fi
+
+# 6. 缺文件：环境缺失退出 4，与源码错误分开
+out=$("$BIN" "$ROOT/bridge/tsgo/testdata/does-not-exist.ts" 2>&1); code=$?
+if [[ $code -eq 4 ]] && print -- "$out" | grep -q "环境缺失"; then
+  pass "缺文件按环境缺失退出 4"
+else
+  fail "缺文件应退出 4，实际退出 $code：$out"
+fi
+
+# 7. 外部直接导入 internal 包必须被 Go 的访问规则拒绝
 probe=$(mktemp -d)
 mkdir -p "$probe"
 cat > "$probe/go.mod" <<EOF
@@ -123,7 +145,7 @@ else
 fi
 rm -rf "$probe"
 
-# 6. 源码身份不符：换掉 go.mod 的模块行
+# 8. 源码身份不符：换掉 go.mod 的模块行
 probe=$(mktemp -d)
 mkdir -p "$probe/tools/toolchain" "$probe/.work/frontend/typescript-go"
 cp "$ROOT/tools/toolchain/go.lock.json" "$probe/tools/toolchain/"
@@ -136,7 +158,7 @@ else
 fi
 rm -rf "$probe"
 
-# 7. 声明库缺失：只放标记文件，不放 libs 目录
+# 9. 声明库缺失：只放标记文件，不放 libs 目录
 probe=$(mktemp -d)
 mkdir -p "$probe/tools/toolchain" "$probe/.work/frontend/typescript-go/internal/compiler"
 cp "$ROOT/tools/toolchain/go.lock.json" "$probe/tools/toolchain/"
@@ -150,7 +172,7 @@ else
 fi
 rm -rf "$probe"
 
-# 8. 声明库不完整：只有 lib.es5.d.ts
+# 10. 声明库不完整：只有 lib.es5.d.ts
 probe=$(mktemp -d)
 mkdir -p "$probe/tools/toolchain" "$probe/.work/frontend/typescript-go/internal/compiler" "$probe/.work/frontend/typescript-go/internal/bundled/libs"
 cp "$ROOT/tools/toolchain/go.lock.json" "$probe/tools/toolchain/"

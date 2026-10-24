@@ -2,7 +2,10 @@ module github.com/Mahoo12138/tynel/bridge/tsgo/consumer
 
 go 1.27
 
-require github.com/microsoft/typescript-go v0.0.0
+require (
+	github.com/Mahoo12138/tynel v0.0.0
+	github.com/microsoft/typescript-go v0.0.0
+)
 
 require (
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
@@ -12,6 +15,10 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
+
+// 宿主依赖 Tynel 自己的源码快照与诊断映射，也依赖上游模块里的适配包。
+// 两条 replace 都指向本机已准备好的目录，因此克隆后要先运行准备命令。
+replace github.com/Mahoo12138/tynel => ../../..
 
 // 上游模块的包全是 internal，只能由模块树内的代码导入。适配包被复制进
 // .work/frontend/typescript-go/tyneladapter，本模块通过 replace 指向那棵树，

@@ -1,8 +1,8 @@
 // Command consumer 是一个位于 Tynel 之外的原生宿主示例。
 //
-// 它只依赖 github.com/microsoft/typescript-go/tyneladapter 这一个包，不导入
-// 任何 internal 包；这也正是适配包存在的理由——上游把所有能力都放在 internal
-// 下，模块外的程序无法直接使用。
+// 它做三件事：把源文件读成一次快照、通过适配包检查这份快照、把前端给的字节
+// 偏移映射成行列。除了适配包，它只依赖 Tynel 自己的 compiler/source，不导入
+// 上游任何 internal 包——这正是适配包存在的理由。
 //
 //	consumer <file.ts>          输出诊断 JSON；有 error 级诊断时退出 1
 //	consumer -quiet <file.ts>   只输出摘要
@@ -15,8 +15,25 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+	"github.com/Mahoo12138/tynel/compiler/source"
 	"github.com/microsoft/typescript-go/tyneladapter"
 )
+
+// output 是宿主对外的诊断形状。字段比 compiler/source 的结构更平，方便脚本
+// 直接取 line、column；行列从位置换算得来，字节区间单独保留。
+type output struct {
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Column    int    `json:"column"`
+	EndLine   int    `json:"endLine"`
+	EndColumn int    `json:"endColumn"`
+	Start     int    `json:"start"`
+	Length    int    `json:"length"`
+	Severity  string `json:"severity"`
+	Code      int32  `json:"code"`
+	Message   string `json:"message"`
+}
 
 func main() {
 	quiet := flag.Bool("quiet", false, "只输出摘要")
@@ -27,51 +44,103 @@ func main() {
 
 	if flag.NArg() != 1 {
 		flag.Usage()
-		os.Exit(2)
+		os.Exit(diagnostic.ExitUsage)
 	}
 	path, err := filepath.Abs(flag.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "无法解析路径：%v\n", err)
-		os.Exit(2)
-	}
-	source, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取 %s 失败：%v\n", path, err)
-		os.Exit(2)
+		os.Exit(diagnostic.ExitUsage)
 	}
 
-	session, err := tyneladapter.Open(tyneladapter.Options{FileName: path, Source: source})
+	// 唯一一次磁盘读取。之后无论原文件怎么改，诊断都对应这一刻的内容。
+	snapshot, err := source.Read(path, source.DefaultLimits())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "建立检查会话失败：%v\n", err)
-		os.Exit(3)
+		report(err)
 	}
-	diagnostics, err := session.Diagnostics()
+
+	diagnostics, err := check(snapshot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取诊断失败：%v\n", err)
-		os.Exit(3)
-	}
-	if err := session.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "关闭会话失败：%v\n", err)
-		os.Exit(3)
+		report(err)
 	}
 
 	errors := 0
+	items := make([]output, 0, len(diagnostics))
 	for _, d := range diagnostics {
-		if d.Category == "error" {
+		if d.Severity == source.SeverityError {
 			errors++
 		}
+		items = append(items, flatten(d))
 	}
+
 	if *quiet {
-		fmt.Printf("%d 条诊断，其中 %d 条错误\n", len(diagnostics), errors)
+		fmt.Printf("%d 条诊断，其中 %d 条错误\n", len(items), errors)
 	} else {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(diagnostics); err != nil {
+		if err := encoder.Encode(items); err != nil {
 			fmt.Fprintf(os.Stderr, "写出诊断失败：%v\n", err)
-			os.Exit(3)
+			os.Exit(diagnostic.ExitInternal)
 		}
 	}
 	if errors > 0 {
-		os.Exit(1)
+		os.Exit(diagnostic.ExitSource)
 	}
+}
+
+// check 建立会话、取诊断、关闭会话，再把结果映射到快照位置。
+func check(snapshot *source.Snapshot) ([]source.Diagnostic, error) {
+	session, err := tyneladapter.Open(tyneladapter.Options{
+		FileName: snapshot.Path(),
+		Source:   snapshot.Bytes(),
+	})
+	if err != nil {
+		return nil, diagnostic.New(diagnostic.Environment, "frontend.session", "无法建立检查会话").WithDetail(err.Error())
+	}
+	raw, err := session.Diagnostics()
+	closeErr := session.Close()
+	if err != nil {
+		return nil, diagnostic.New(diagnostic.Internal, "frontend.diagnostics", "读取前端诊断失败").WithDetail(err.Error())
+	}
+	if closeErr != nil {
+		return nil, diagnostic.New(diagnostic.Internal, "frontend.close", "关闭会话失败").WithDetail(closeErr.Error())
+	}
+	return snapshot.MapDiagnostics(convert(raw))
+}
+
+// convert 把适配层的诊断摊平成 source 认识的形状。这是宿主承担的转换，
+// 适配层不需要知道 Tynel 的诊断结构。
+func convert(in []tyneladapter.Diagnostic) []source.FrontendDiagnostic {
+	out := make([]source.FrontendDiagnostic, 0, len(in))
+	for _, d := range in {
+		out = append(out, source.FrontendDiagnostic{
+			File:     d.File,
+			Code:     d.Code,
+			Category: d.Category,
+			Message:  d.Message,
+			Start:    d.Start,
+			Length:   d.Length,
+		})
+	}
+	return out
+}
+
+func flatten(d source.Diagnostic) output {
+	return output{
+		File:      d.Location.Path,
+		Line:      d.Location.Start.Line,
+		Column:    d.Location.Start.Column,
+		EndLine:   d.Location.End.Line,
+		EndColumn: d.Location.End.Column,
+		Start:     d.Location.Bytes.Start,
+		Length:    d.Location.Bytes.End - d.Location.Bytes.Start,
+		Severity:  string(d.Severity),
+		Code:      d.Code,
+		Message:   d.Message,
+	}
+}
+
+// report 输出一条失败并按其类别退出。源码错误与环境缺失在这里分开。
+func report(err error) {
+	_ = diagnostic.Write(os.Stderr, err)
+	os.Exit(diagnostic.ExitCode(err))
 }

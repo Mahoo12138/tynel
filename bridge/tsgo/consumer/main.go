@@ -6,6 +6,7 @@
 //
 //	consumer <file.ts>          输出诊断 JSON；有 error 级诊断时退出 1
 //	consumer -quiet <file.ts>   只输出摘要
+//	consumer -facts <file.ts>   输出前端事实 JSON（开发接口）
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+	"github.com/Mahoo12138/tynel/compiler/frontend"
 	"github.com/Mahoo12138/tynel/compiler/source"
 	"github.com/microsoft/typescript-go/tyneladapter"
 )
@@ -37,6 +39,7 @@ type output struct {
 
 func main() {
 	quiet := flag.Bool("quiet", false, "只输出摘要")
+	facts := flag.Bool("facts", false, "输出前端事实而不是诊断")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "用法：consumer [-quiet] <file.ts>")
 	}
@@ -56,6 +59,18 @@ func main() {
 	snapshot, err := source.Read(path, source.DefaultLimits())
 	if err != nil {
 		report(err)
+	}
+
+	if *facts {
+		out, err := dumpFacts(snapshot)
+		if err != nil {
+			report(err)
+		}
+		if _, err := os.Stdout.Write(out); err != nil {
+			fmt.Fprintf(os.Stderr, "写出事实失败：%v\n", err)
+			os.Exit(diagnostic.ExitInternal)
+		}
+		return
 	}
 
 	diagnostics, err := check(snapshot)
@@ -85,6 +100,33 @@ func main() {
 	if errors > 0 {
 		os.Exit(diagnostic.ExitSource)
 	}
+}
+
+// dumpFacts 取事实、解码并校验，然后按规范形式重新编码输出。
+//
+// 输出的是解码后的事实，不是适配层的原始字节：解码会拒绝未知字段，校验会
+// 检查 ID、引用和调用是否自洽，能通过这两关的数据才值得给别人看。
+func dumpFacts(snapshot *source.Snapshot) ([]byte, error) {
+	session, err := tyneladapter.Open(tyneladapter.Options{
+		FileName: snapshot.Path(),
+		Source:   snapshot.Bytes(),
+	})
+	if err != nil {
+		return nil, diagnostic.New(diagnostic.Environment, "frontend.session", "无法建立检查会话").WithDetail(err.Error())
+	}
+	raw, err := session.Facts()
+	closeErr := session.Close()
+	if err != nil {
+		return nil, diagnostic.New(diagnostic.Internal, "frontend.facts", "读取前端事实失败").WithDetail(err.Error())
+	}
+	if closeErr != nil {
+		return nil, diagnostic.New(diagnostic.Internal, "frontend.close", "关闭会话失败").WithDetail(closeErr.Error())
+	}
+	decoded, err := frontend.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(decoded, "", "  ")
 }
 
 // check 建立会话、取诊断、关闭会话，再把结果映射到快照位置。

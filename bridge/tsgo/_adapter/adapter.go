@@ -14,6 +14,8 @@ package tyneladapter
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -63,6 +65,7 @@ type Diagnostic struct {
 type Session struct {
 	mu      sync.Mutex
 	closed  bool
+	id      string
 	program *compiler.Program
 	file    *ast.SourceFile
 }
@@ -107,7 +110,7 @@ func Open(opts Options) (*Session, error) {
 	if file == nil {
 		return nil, fmt.Errorf("tyneladapter: 程序没有载入 %s", name)
 	}
-	return &Session{program: program, file: file}, nil
+	return &Session{id: newSessionID(), program: program, file: file}, nil
 }
 
 // Diagnostics 返回程序级、语法和语义诊断，顺序是程序级在前、文件级在后。
@@ -140,6 +143,16 @@ func (s *Session) Diagnostics() ([]Diagnostic, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// newSessionID 给每次检查一个短标识。事实带上它，把两份来自不同会话的事实
+// 拼在一起时就能被发现，而不是悄悄混用。
+func newSessionID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 // Close 释放会话并清空上游句柄。

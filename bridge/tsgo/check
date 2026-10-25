@@ -5,7 +5,7 @@
 #
 # 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
-# 缺失被拒。
+# 缺失被拒，以及声明事实。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -186,6 +186,25 @@ else
   fail "声明库不完整应退出 8，实际退出 $code：$out"
 fi
 rm -rf "$probe"
+
+# 11. 事实：同名参数不同 ID，前向调用解析到后声明的函数
+facts=$(mktemp)
+"$BIN" -facts "$ROOT/bridge/tsgo/testdata/facts.ts" >"$facts" 2>/dev/null; code=$?
+if [[ $code -eq 0 ]] && python3 - "$facts" <<'FACTSPY'
+import json, sys
+facts = json.load(open(sys.argv[1]))
+params = [d["id"] for d in facts["declarations"] if d["kind"] == "parameter" and d["name"] == "a"]
+assert len(params) == 2 and params[0] != params[1], params
+call = facts["calls"][0]
+callee = next(d for d in facts["declarations"] if d["id"] == call["callee"])
+assert callee["name"] == "add" and callee["start"] > call["start"], callee
+FACTSPY
+then
+  pass "事实区分同名参数并解析前向调用"
+else
+  fail "事实输出不符合预期（退出 $code）"
+fi
+rm -f "$facts"
 
 print -- ""
 if [[ $failures -eq 0 ]]; then

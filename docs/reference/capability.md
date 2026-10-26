@@ -27,7 +27,7 @@ function identity(value: any): any {
   "column": 1,
   "category": "能力限制",
   "code": "cap.any",
-  "message": "函数 \"identity\" 的返回类型是 any 或 unknown；本阶段只支持 number、boolean 和 void"
+  "message": "函数 \"identity\" 的返回类型是 any 或 unknown；本阶段只支持 number 和 void"
 }
 ```
 
@@ -52,11 +52,31 @@ function neverCalled(): number {
 
 | 类别 | 支持 | 说明 |
 | --- | --- | --- |
-| 声明 | `function`、参数、顶层 `const` | 类型限 `number`、`boolean`、`void` |
+| 声明 | `function`、参数、顶层 `const` | 参数与常量限 `number`，返回值限 `number` 或 `void` |
 | 运算 | `+` `-` `*` `/`，一元 `-` `+` | 其余运算符拒绝 |
 | 调用 | 本文件内声明的函数，实参个数与形参一致 | 不支持函数值、方法调用 |
-| 语句 | `return`、表达式语句、语句块 | 局部变量、控制流留到后续阶段 |
+| 语句 | `return`、表达式语句、语句块 | 表达式语句的结果被丢弃，见下 |
 | 输出 | `console.log(<number>)` | 必须是内置 `console`，见下 |
+
+`boolean` 在 03.01 加入；现在写 `const flag: boolean = ...` 会得到 `cap.bad-type`。
+
+## void 与丢弃结果
+
+`void` 只描述「没有值」，所以它只能出现在两个位置：作为函数的返回类型，以及作为一条表达式语句的完整表达式。
+
+```typescript
+function announce(n: number): void {
+  console.log(n);
+}
+
+announce(1);        // 可以：调用语句，结果丢弃
+console.log(announce(1));  // 拒绝：void 没有值可以传
+const x = announce(1);     // 拒绝：void 没有值可以绑
+```
+
+`announce(1)` 作为参数、操作数、返回值或常量初始值时，报 `cap.void-value`。TypeScript 的类型检查能拦住其中一部分，但 `console.log` 的形参是 `any[]`，把 void 传进去它不会吭声——这条必须由能力检查补上。
+
+表达式语句的规则相反：**结果被丢弃，不打印**。`answer;` 与 `add(1, 2);` 都是合法写法，求值照做，值不进输出。只有 `console.log(x)` 会写一行。
 
 ## 错误码
 
@@ -72,6 +92,8 @@ function neverCalled(): number {
 | `cap.bad-operator` | 运算符不在 `+ - * /`（或一元 `- +`）之内 |
 | `cap.unknown-name` | 引用了本文件之外的名称 |
 | `cap.arg-count` | 实参个数与函数声明的形参个数不一致 |
+| `cap.void-value` | 把 void 调用当作值使用：实参、操作数、返回值、常量初始值 |
+| `cap.bad-type` | 声明的类型不在本阶段范围内，例如 `string` 参数、`boolean` 常量 |
 
 错误消息里带着具体的写法名（`对象字面量`、`控制流 IfStatement`），因为「不支持」这三个字本身不提供任何线索。
 
@@ -85,7 +107,7 @@ const console = { log: (x: number) => x };
 
 那么 `console.log(42)` 调用的是用户的函数，不是输出。能力检查因此不看名字，而是看 `console` 这个标识符解析到了哪里：解析到本文件里的声明就是遮蔽，按 `cap.shadowed-console` 拒绝。
 
-这条检查现在就能做，尽管真正的输出要等 02.06。能力检查的职责是判断「这段程序能不能进后端」，不是「后端已经实现了它」。
+这条检查与输出是否已实现无关：能力检查的职责是判断「这段程序能不能进后端」。输出本身在 02.06 已经可用，格式见[输出格式](output.md)。
 
 ## 检查不做什么
 

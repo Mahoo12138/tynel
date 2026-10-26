@@ -53,7 +53,7 @@
 
 ### 输出格式
 
-`print` 把 binary64 交给 Go 的默认格式化：
+`print` 每次写一行，一个 `number` 占一行。有限值用最短可回读的十进制写法，负零、NaN 和正负无穷各有固定拼写：
 
 | 值 | 输出 |
 | --- | --- |
@@ -63,7 +63,7 @@
 | NaN | `NaN` |
 | 正无穷 / 负无穷 | `+Inf` / `-Inf` |
 
-这套格式是当前宿主支持的约定，不是 JavaScript `console.log` 的最终协议。接上 TypeScript 前端后由 02.x 固定，无穷的写法（JS 是 `Infinity`）会与现在不同。
+完整规则、读回方式和与 JavaScript 的差异见[输出格式](output.md)。
 
 修改版编译器带戳记 `.work/bridge/stamp.json`。bridge 源码或 SDK 源码变了而编译器没重编时，`build-ir` 按「编译器已过期」退出 4，不产出任何文件——避免用旧 bridge 生成看起来正常的产物。
 

@@ -53,15 +53,39 @@ type checker struct {
 }
 
 func (c *checker) declaration(d *frontend.Declaration) {
-	if d.Kind == frontend.DeclFunction {
-		if d.Result != nil && d.Result.Kind == frontend.KindAny {
-			c.report(d.Start, "cap.any", "函数 %q 的返回类型是 any 或 unknown；本阶段只支持 number、boolean 和 void", d.Name)
+	switch d.Kind {
+	case frontend.DeclFunction:
+		c.declaredType(d.Result, d.Start, "函数 %q 的返回类型", d.Name, frontend.KindNumber, frontend.KindVoid)
+	case frontend.DeclParameter:
+		c.declaredType(d.Type, d.Start, "参数 %q ", d.Name, frontend.KindNumber)
+	case frontend.DeclConst:
+		c.declaredType(d.Type, d.Start, "常量 %q ", d.Name, frontend.KindNumber)
+		if d.Body != nil && d.Body.Type != nil && d.Body.Type.Kind == frontend.KindVoid {
+			c.report(d.Body.Start, "cap.void-value", "常量 %q 的初始值是 void 调用，没有可用的值", d.Name)
 		}
+	}
+}
+
+// declaredType 核对声明上的类型。允许的类别按阶段放开：现在参数与常量只有
+// number，函数返回值是 number 或 void；boolean 在 03.01 加入。
+//
+// format 是带一个 %q 的主语，调用方决定「参数 X 」还是「函数 X 的返回类型」，
+// 这样中文里不会出现「返回类型 是」这种多余的空格。
+func (c *checker) declaredType(t *frontend.Type, offset int, format, name string, allowed ...frontend.Kind) {
+	if t == nil {
+		c.report(offset, "cap.bad-type", format+"缺少类型", name)
 		return
 	}
-	if d.Type != nil && d.Type.Kind == frontend.KindAny {
-		c.report(d.Start, "cap.any", "%s %q 的类型是 any 或 unknown；本阶段只支持 number、boolean 和 void", kindName(d.Kind), d.Name)
+	if t.Kind == frontend.KindAny {
+		c.report(offset, "cap.any", format+"是 any 或 unknown；本阶段只支持 number 和 void", name)
+		return
 	}
+	for _, k := range allowed {
+		if t.Kind == k {
+			return
+		}
+	}
+	c.report(offset, "cap.bad-type", format+"是 %s，本阶段不支持", name, t.Kind)
 }
 
 func (c *checker) node(n *frontend.Node) {
@@ -74,12 +98,22 @@ func (c *checker) node(n *frontend.Node) {
 	case "Const":
 		// 模块级常量本身没问题；它的初始化表达式挂在声明上，已经单独检查过。
 		return
-	case "ReturnStatement", "ExpressionStatement":
+	case "ReturnStatement":
 		if len(n.Children) > 1 {
-			c.report(n.Start, "cap.unsupported-syntax", "%s 有 %d 个子节点，超出本阶段支持的形状", n.Kind, len(n.Children))
+			c.report(n.Start, "cap.unsupported-syntax", "return 有 %d 个值，超出本阶段支持的形状", len(n.Children))
 			return
 		}
-		c.children(n)
+		if len(n.Children) == 1 {
+			c.valueNode(&n.Children[0], "返回值")
+		}
+	case "ExpressionStatement":
+		// 结果被丢弃：表达式本身可以是 number，也可以是 void 调用。值不会被
+		// 打印，只有副作用保留。
+		if len(n.Children) != 1 {
+			c.report(n.Start, "cap.unsupported-syntax", "表达式语句有 %d 个子节点", len(n.Children))
+			return
+		}
+		c.node(&n.Children[0])
 	case "BinaryExpression":
 		if !isArithmetic(n.Op) {
 			c.report(n.Start, "cap.bad-operator", "运算符 %q 不在本阶段支持的 + - * / 之内", n.Op)
@@ -89,7 +123,9 @@ func (c *checker) node(n *frontend.Node) {
 			c.report(n.Start, "cap.unsupported-syntax", "二元运算有 %d 个操作数", len(n.Children))
 			return
 		}
-		c.children(n)
+		for i := range n.Children {
+			c.valueNode(&n.Children[i], "运算符 "+n.Op+" 的操作数")
+		}
 	case "PrefixUnaryExpression":
 		if n.Op != "-" && n.Op != "+" {
 			c.report(n.Start, "cap.bad-operator", "一元运算符 %q 不在本阶段支持的范围之内", n.Op)
@@ -99,7 +135,7 @@ func (c *checker) node(n *frontend.Node) {
 			c.report(n.Start, "cap.unsupported-syntax", "一元运算有 %d 个操作数", len(n.Children))
 			return
 		}
-		c.children(n)
+		c.valueNode(&n.Children[0], "一元 "+n.Op+" 的操作数")
 	case "Identifier":
 		c.identifier(n)
 	case "NumericLiteral":
@@ -129,6 +165,19 @@ func (c *checker) node(n *frontend.Node) {
 	default:
 		c.report(n.Start, "cap.unsupported-syntax", "语法 %s 不在本阶段子集内", n.Kind)
 	}
+}
+
+// valueNode 检查一个处在「需要值」位置的表达式。void 调用只能单独成句或作为
+// 丢弃结果的对象；出现在这里说明有人想用它的值，必须拒绝。
+func (c *checker) valueNode(n *frontend.Node, what string) {
+	if n == nil {
+		return
+	}
+	if n.Type != nil && n.Type.Kind == frontend.KindVoid {
+		c.report(n.Start, "cap.void-value", "%s 需要一个值，但这里是 void 调用", what)
+		return
+	}
+	c.node(n)
 }
 
 func (c *checker) children(n *frontend.Node) {
@@ -179,7 +228,7 @@ func (c *checker) call(n *frontend.Node) {
 			return
 		}
 		for i := range args {
-			c.node(&args[i])
+			c.valueNode(&args[i], "调用 "+decl.Name+" 的实参")
 		}
 	case "PropertyAccessExpression":
 		c.consoleCall(n, callee, args)
@@ -208,6 +257,10 @@ func (c *checker) consoleCall(n *frontend.Node, callee *frontend.Node, args []fr
 		c.report(n.Start, "cap.bad-console-call", "console.log 只接受一个参数，收到 %d 个", len(args))
 		return
 	}
+	if args[0].Type != nil && args[0].Type.Kind == frontend.KindVoid {
+		c.report(args[0].Start, "cap.void-value", "console.log 需要一个值，但这里是 void 调用")
+		return
+	}
 	if args[0].Type == nil || args[0].Type.Kind != frontend.KindNumber {
 		c.report(args[0].Start, "cap.bad-console-call", "console.log 只接受 number，本阶段不支持其他类型")
 		return
@@ -233,16 +286,4 @@ func isArithmetic(op string) bool {
 		return true
 	}
 	return false
-}
-
-func kindName(k frontend.DeclKind) string {
-	switch k {
-	case frontend.DeclParameter:
-		return "参数"
-	case frontend.DeclConst:
-		return "常量"
-	case frontend.DeclFunction:
-		return "函数"
-	}
-	return string(k)
 }

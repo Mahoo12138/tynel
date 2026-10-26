@@ -7,8 +7,10 @@ package native
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -77,6 +79,51 @@ func TestFixtureOutputs(t *testing.T) {
 				t.Fatalf("输出为 %q，期望 %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestPrintedNumbersReadBack 把输出逐行读回成 binary64，再按位比较。
+//
+// 只比字符串不够：`-0` 与 `0` 是两行不同的文本，但格式化器完全可能把它们写成
+// 一样。反过来，`0.30000000000000004` 只有解析回 binary64 才能确认它就是
+// 0.1 + 0.2 的那个值，而不是被四舍五入过的近似。
+func TestPrintedNumbersReadBack(t *testing.T) {
+	root := repoRoot(t)
+	output := filepath.Join(t.TempDir(), "specials")
+	text := buildAndRun(t, root, filepath.Join(root, "tests", "native", "fixtures", "specials.nir.json"), output)
+
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("期望 5 行输出，实际 %d 行：%q", len(lines), text)
+	}
+	type want struct {
+		text  string
+		check func(float64) bool
+	}
+	cases := []want{
+		{"-0", func(v float64) bool { return v == 0 && math.Signbit(v) }},
+		{"NaN", math.IsNaN},
+		{"+Inf", func(v float64) bool { return math.IsInf(v, 1) }},
+		{"-Inf", func(v float64) bool { return math.IsInf(v, -1) }},
+		// 用变量相加，而不是常量表达式 0.1+0.2：Go 的常量算术是精确的，
+		// 0.3 会取到最近的 binary64，与运行时 0.1 加 0.2 的结果不是同一个数。
+		{"0.30000000000000004", func(v float64) bool {
+			a, b := 0.1, 0.2
+			return v == a+b
+		}},
+	}
+	for i, c := range cases {
+		if lines[i] != c.text {
+			t.Errorf("第 %d 行是 %q，期望 %q", i+1, lines[i], c.text)
+		}
+		v, err := strconv.ParseFloat(lines[i], 64)
+		if err != nil {
+			t.Errorf("第 %d 行 %q 读不回来：%v", i+1, lines[i], err)
+			continue
+		}
+		if !c.check(v) {
+			t.Errorf("第 %d 行 %q 读回的值不对", i+1, lines[i])
+		}
 	}
 }
 

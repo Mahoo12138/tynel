@@ -158,6 +158,14 @@ func TestDecodeRejectsInvalidStructure(t *testing.T) {
 		{"非法结果类型", func(m *Module) { m.Functions[0].Result = "string" }, "nir.bad-value"},
 		{"参数类型不是 number", func(m *Module) { m.Functions[0].Params = []Param{{Name: "a", Type: "string"}} }, "nir.bad-value"},
 		{"print 缺 value", func(m *Module) { m.Functions[0].Body[0].Value = nil }, "nir.missing"},
+		{"discard 缺 value", func(m *Module) {
+			m.Functions[0].Body[0].Op = OpDiscard
+			m.Functions[0].Body[0].Value = nil
+		}, "nir.missing"},
+		{"discard 带 name", func(m *Module) {
+			m.Functions[0].Body[0].Op = OpDiscard
+			m.Functions[0].Body[0].Name = "x"
+		}, "nir.unexpected-field"},
 		{"未知语句 op", func(m *Module) { m.Functions[0].Body[0].Op = "jump" }, "nir.bad-op"},
 		{"未知表达式 op", func(m *Module) { m.Functions[0].Body[0].Value.Op = "magic" }, "nir.bad-op"},
 		{"number 带 name", func(m *Module) { m.Functions[0].Body[0].Value.Name = "x" }, "nir.unexpected-field"},

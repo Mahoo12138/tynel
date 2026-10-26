@@ -126,13 +126,25 @@ go run . -capability ../testdata/capability/ok.ts
 # 降低成 NIR，再交给 build-ir 编成原生程序。
 go run . -nir ../testdata/add.ts > /tmp/add.nir.json
 cd ../.. && ./bin/tynel build-ir /tmp/add.nir.json -o /tmp/add && /tmp/add
+
+# void 函数与丢弃结果：输出两行 7、8。
+go run . -nir ../testdata/void.ts > /tmp/void.nir.json
+./bin/tynel build-ir /tmp/void.nir.json -o /tmp/void && /tmp/void
+
+# 表达式语句丢弃结果：只输出 42。
+go run . -nir ../testdata/discard.ts > /tmp/discard.nir.json
+./bin/tynel build-ir /tmp/discard.nir.json -o /tmp/discard && /tmp/discard
+
+# 输出格式：有限值、负零、正负无穷与 NaN。
+go run . -nir ../testdata/output.ts > /tmp/output.nir.json
+./bin/tynel build-ir /tmp/output.nir.json -o /tmp/output && /tmp/output
 ```
 
-宿主是独立模块，通过两条 `replace` 指向 `.work/frontend/typescript-go` 与仓库根目录，只导入 `tyneladapter` 和 Tynel 自己的 `compiler/source`，不导入任何 `internal` 包。诊断里的 `start` 是 UTF-8 字节偏移，`line`/`column` 是按快照换算的行列；换算规则和错误码见[源码快照与位置](reference/source.md)，适配接口与会话规则见[前端适配](reference/frontend.md)，声明 ID、类型摘要与校验规则见[声明身份与事实](reference/facts.md)，支持的写法与错误码见[原生能力白名单](reference/capability.md)，源码到 NIR 的对应关系见[从源码到 NIR](reference/lowering.md)。
+宿主是独立模块，通过两条 `replace` 指向 `.work/frontend/typescript-go` 与仓库根目录，只导入 `tyneladapter` 和 Tynel 自己的 `compiler/source`，不导入任何 `internal` 包。诊断里的 `start` 是 UTF-8 字节偏移，`line`/`column` 是按快照换算的行列；换算规则和错误码见[源码快照与位置](reference/source.md)，适配接口与会话规则见[前端适配](reference/frontend.md)，声明 ID、类型摘要与校验规则见[声明身份与事实](reference/facts.md)，支持的写法与错误码见[原生能力白名单](reference/capability.md)，源码到 NIR 的对应关系见[从源码到 NIR](reference/lowering.md)，打印器的格式与读回方式见[输出格式](reference/output.md)。
 
 `bridge/tsgo/check` 首次运行会下载前端依赖到 `.work/frontend/gomodcache`，之后可以离线构建；默认使用 `https://goproxy.cn`，可用 `TYNEL_GOPROXY` 覆盖。
 
-中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，目前没有命令行入口可以直接读它；往返一致、特殊值位模式、预算限制和语义规则（入口签名、引用、实参、返回类型）都由 `./tools/test` 里的 `compiler/nir` 用例检查。
+中间表示的格式、读入预算和错误码见 [NIR 格式](reference/nir.md)。`examples/ir/add.nir.json` 是手写的 `add(40, 2)`，可以直接用 `tynel build-ir` 编译；往返一致、特殊值位模式、预算限制和语义规则（入口签名、引用、实参、返回类型）都由 `./tools/test` 里的 `compiler/nir` 用例检查。
 
 ## 生成了什么
 

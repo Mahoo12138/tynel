@@ -169,6 +169,72 @@ func TestBadOperatorIsRejected(t *testing.T) {
 	wantCode(t, check(t, facts), "cap.bad-operator")
 }
 
+// withVoidFunction 追加一个 void 函数，供「void 当作值」的用例调用。
+func withVoidFunction(facts *frontend.Facts) {
+	void := frontend.Type{Kind: frontend.KindVoid}
+	body := node("Block")
+	facts.Declarations = append(facts.Declarations,
+		frontend.Declaration{ID: 5, Kind: frontend.DeclFunction, Name: "announce", Start: 40, Length: 10, Result: &void, Body: &body},
+	)
+}
+
+func TestVoidValueIsRejected(t *testing.T) {
+	// console.log(announce())：void 调用没有值，不能当参数。
+	facts := base()
+	withVoidFunction(facts)
+	call := typed("CallExpression", frontend.KindVoid,
+		propertyAccess("log", ident("console", 0)),
+		typed("CallExpression", frontend.KindVoid, ident("announce", 5)),
+	)
+	body := node("Block", node("ExpressionStatement", call))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.void-value")
+
+	// void 调用出现在算术里。
+	facts = base()
+	withVoidFunction(facts)
+	body = node("Block", node("ReturnStatement", binary("+",
+		typed("CallExpression", frontend.KindVoid, ident("announce", 5)),
+		typed("NumericLiteral", frontend.KindNumber),
+	)))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.void-value")
+}
+
+func TestDeclaredTypesAreChecked(t *testing.T) {
+	stringType := frontend.Type{Kind: frontend.KindString}
+	facts := base()
+	facts.Declarations[1].Type = &stringType
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	facts = base()
+	facts.Declarations[0].Result = &stringType
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	facts = base()
+	facts.Declarations = append(facts.Declarations,
+		frontend.Declaration{ID: 4, Kind: frontend.DeclConst, Name: "flag", Start: 30, Length: 4, Type: &frontend.Type{Kind: frontend.KindBoolean}},
+	)
+	wantCode(t, check(t, facts), "cap.bad-type")
+}
+
+// TestDiscardedStatementsPass 确认「求值但丢弃」不是错误：调用语句与裸标识符
+// 都只是把结果丢掉，副作用仍然保留。
+func TestDiscardedStatementsPass(t *testing.T) {
+	facts := base()
+	withVoidFunction(facts)
+	body := node("Block",
+		node("ExpressionStatement", typed("CallExpression", frontend.KindNumber, ident("add", 1), ident("a", 2), ident("b", 3))),
+		node("ExpressionStatement", typed("CallExpression", frontend.KindVoid, ident("announce", 5))),
+		node("ExpressionStatement", ident("a", 2)),
+		node("ReturnStatement", binary("+", ident("a", 2), ident("b", 3))),
+	)
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("丢弃结果的表达式语句应通过，实际 %v", codes(findings))
+	}
+}
+
 func TestConsoleCall(t *testing.T) {
 	// console.log 的合法形状：属性访问 + 一个 number 实参。
 	call := typed("CallExpression", frontend.KindVoid,

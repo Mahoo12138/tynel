@@ -101,6 +101,11 @@ func (c *checker) function(f *Function) error {
 			if got != TypeNumber {
 				return failAt("nir.print-type", s.Pos, "print 只接受 number，实际为 %s", got)
 			}
+		case OpDiscard:
+			// 结果被丢弃，类型只用来确认表达式本身成立：number 与 void 都行。
+			if _, err := c.exprType(s.Value, sc); err != nil {
+				return err
+			}
 		case OpLet:
 			got, err := c.exprType(s.Value, sc)
 			if err != nil {

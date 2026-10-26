@@ -5,7 +5,8 @@
 #
 # 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
-# 缺失被拒、声明事实、原生能力白名单，以及从源码降低到可运行的原生程序。
+# 缺失被拒、声明事实、原生能力白名单、void 与丢弃结果、输出格式，以及从源码
+# 降低到可运行的原生程序。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -217,7 +218,8 @@ fi
 
 for pair in "any.ts:cap.any" "assert.ts:cap.type-escape" "object.ts:cap.unsupported-syntax" \
             "eval.ts:cap.forbidden-global" "dynamic-function.ts:cap.unsupported-syntax" \
-            "library.ts:cap.unknown-callee" "uncalled.ts:cap.unsupported-syntax"; do
+            "library.ts:cap.unknown-callee" "uncalled.ts:cap.unsupported-syntax" \
+            "void-value.ts:cap.void-value" "shadowed-console.ts:cap.shadowed-console"; do
   file=${pair%%:*}
   want=${pair##*:}
   out=$("$BIN" -capability "$CAP/$file" 2>&1); code=$?
@@ -234,6 +236,18 @@ if [[ $code -eq 1 ]] && print -- "$out" | grep -q '"code": 2322'; then
 else
   fail "源码错误应退出 1，实际退出 $code：$out"
 fi
+
+# 给 void 函数返回值、实参个数不符：TypeScript 自己就拒绝，不必等到能力检查。
+for pair in "return-value.ts:2322" "arg-count.ts:2554"; do
+  file=${pair%%:*}
+  want=${pair##*:}
+  out=$("$BIN" -capability "$CAP/$file" 2>&1); code=$?
+  if [[ $code -eq 1 ]] && print -- "$out" | grep -q "\"code\": $want"; then
+    pass "$file 由源码检查拒绝（$want，退出 1）"
+  else
+    fail "$file 应退出 1 并报 $want，实际退出 $code：$out"
+  fi
+done
 
 # 13. 降低到 NIR 并运行：源码 → NIR → 原生程序，与手写 NIR 行为一致
 TYNEL="$ROOT/bin/tynel"
@@ -260,6 +274,7 @@ else
       return
     fi
     local got=$("$exe")
+    print -- "$got" > "$tmp/$name.out"
     if [[ "$got" == "$want" ]]; then
       pass "$name 运行输出符合预期"
     else
@@ -271,6 +286,26 @@ else
   lower_case "$ROOT/bridge/tsgo/testdata/lower/negzero.ts" "-0"
   lower_case "$ROOT/bridge/tsgo/testdata/lower/forward.ts" "42"
   lower_case "$ROOT/bridge/tsgo/testdata/lower/same-name.ts" "8"
+  lower_case "$ROOT/bridge/tsgo/testdata/void.ts" $'7\n8'
+  lower_case "$ROOT/bridge/tsgo/testdata/discard.ts" "42"
+  lower_case "$ROOT/bridge/tsgo/testdata/output.ts" $'0.30000000000000004\n-0\n+Inf\n-Inf\nNaN'
+
+  # 输出逐行读回成 binary64：字符串对得上还不够，值也要对得上。
+  if python3 - "$tmp/output.out" <<'OUTPY'
+import math, sys
+lines = open(sys.argv[1]).read().splitlines()
+assert lines == ["0.30000000000000004", "-0", "+Inf", "-Inf", "NaN"], lines
+values = [float(x) for x in lines]
+assert math.copysign(1.0, values[1]) < 0 and values[1] == 0, values[1]
+assert math.isinf(values[2]) and values[2] > 0, values[2]
+assert math.isinf(values[3]) and values[3] < 0, values[3]
+assert math.isnan(values[4]), values[4]
+OUTPY
+  then
+    pass "输出逐行可读回（含负零与无穷）"
+  else
+    fail "输出格式或读回不一致"
+  fi
 
   if "$TYNEL" build-ir "$ROOT/examples/ir/add.nir.json" -o "$tmp/hand" >/dev/null 2>&1; then
     hand=$("$tmp/hand")

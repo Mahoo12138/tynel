@@ -141,6 +141,56 @@ func TestNegatedLiteralKeepsSignBit(t *testing.T) {
 	}
 }
 
+// TestVoidFunctionAndDiscardedStatements 覆盖本节点新增的两种语句形状：
+// void 函数正常结束（补一条空 return），以及求值后丢弃结果的表达式语句。
+func TestVoidFunctionAndDiscardedStatements(t *testing.T) {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	void := frontend.Type{Kind: frontend.KindVoid}
+	body := node("Block", node("ExpressionStatement", consoleLog(ident("n", 2))))
+	init := literal("0x4044000000000000")
+	constNode := node("Const")
+	constNode.Decl = 3
+	module := node("Block",
+		constNode,
+		node("ExpressionStatement", typed("CallExpression", frontend.KindVoid, ident("announce", 1), literal("0x401c000000000000"))),
+		node("ExpressionStatement", ident("answer", 3)),
+	)
+	facts := &frontend.Facts{
+		SchemaVersion: 1, Session: "s", File: "/tmp/t.ts", Module: &module,
+		Declarations: []frontend.Declaration{
+			{ID: 1, Kind: frontend.DeclFunction, Name: "announce", Start: 0, Length: 30, Result: &void, Parameters: []int{2}, Body: &body},
+			{ID: 2, Kind: frontend.DeclParameter, Name: "n", Start: 10, Length: 1, Type: &number},
+			{ID: 3, Kind: frontend.DeclConst, Name: "answer", Start: 40, Length: 6, Type: &number, Body: &init},
+		},
+	}
+	lowered := lowerFacts(t, facts)
+
+	announce := lowered.Functions[0]
+	if announce.Result != nir.TypeVoid || len(announce.Body) != 2 {
+		t.Fatalf("announce 应为 void 且有两条语句：%+v", announce)
+	}
+	if got := announce.Body[0]; got.Op != nir.OpPrint || got.Value.Op != nir.OpParam || got.Value.Name != "n" {
+		t.Fatalf("第一条应为 print param n：%+v", got)
+	}
+	if got := announce.Body[1]; got.Op != nir.OpReturn || got.Value != nil {
+		t.Fatalf("void 函数结尾应补一条空 return：%+v", got)
+	}
+
+	main := lowered.Functions[1]
+	if len(main.Body) != 4 {
+		t.Fatalf("main 应有 4 条语句，实际 %d：%+v", len(main.Body), main.Body)
+	}
+	if got := main.Body[0]; got.Op != nir.OpLet || got.Name != "answer" {
+		t.Fatalf("第一条应为 let answer：%+v", got)
+	}
+	if got := main.Body[1]; got.Op != nir.OpDiscard || got.Value.Op != nir.OpCall || got.Value.Function != "announce" {
+		t.Fatalf("第二条应为 discard 调用 announce：%+v", got)
+	}
+	if got := main.Body[2]; got.Op != nir.OpDiscard || got.Value.Op != nir.OpLocal || got.Value.Name != "answer" {
+		t.Fatalf("第三条应为 discard 局部值 answer：%+v", got)
+	}
+}
+
 func TestRejectsBadFacts(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -177,6 +227,22 @@ func TestRejectsBadFacts(t *testing.T) {
 			body := node("Block")
 			f.Declarations[0].Body = &body
 		}, "lower.missing-return"},
+		{"number 函数里 return 不带值", func(f *frontend.Facts) {
+			body := node("Block", node("ReturnStatement"))
+			f.Declarations[0].Body = &body
+		}, "lower.missing-value"},
+		{"void 函数里 return 带值", func(f *frontend.Facts) {
+			void := frontend.Type{Kind: frontend.KindVoid}
+			f.Declarations[0].Result = &void
+			body := node("Block", node("ReturnStatement", binary("+", ident("a", 2), ident("b", 3))))
+			f.Declarations[0].Body = &body
+		}, "lower.void-value"},
+		{"参数类型不是 number", func(f *frontend.Facts) {
+			f.Declarations[1].Type = &frontend.Type{Kind: frontend.KindString}
+		}, "lower.bad-type"},
+		{"函数返回类型不是 number 或 void", func(f *frontend.Facts) {
+			f.Declarations[0].Result = &frontend.Type{Kind: frontend.KindString}
+		}, "lower.bad-type"},
 		{"一元负号作用在参数上", func(f *frontend.Facts) {
 			neg := typed("PrefixUnaryExpression", frontend.KindNumber, ident("a", 2))
 			neg.Op = "-"

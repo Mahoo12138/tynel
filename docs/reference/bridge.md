@@ -108,6 +108,17 @@ deadlocals / escape / walk / SSA / obj / link
 
 所以 bridge 给空的 `void` 函数补一条空 `return`。这不是为了绕过检查，而是语义等价：函数正常结束就是返回。补上之后，空入口才是可执行函数而不是外部声明。
 
+## 被丢弃的表达式怎么落地
+
+`discard` 要求「求值，但不要结果」。Go 的 IR 对这件事的接受程度取决于表达式形状：
+
+- **void 调用**可以直接作为语句。`f()` 没有结果，放进函数体就是一条调用语句，编译器和 SSA 都认。
+- **number 表达式**不行。把 `answer` 这样一个 `*ir.Name` 直接当语句放进去，编译器内部报 `internal compiler error: unexpected stmt: answer`——Go 的语法层从不允许这种写法，IR 层也没有对应的处理分支。
+
+所以 bridge 对 `number` 的 `discard` 生成一条赋值：`fn.NewLocal` 造一个名字形如 `_tynel_discard_1` 的局部变量，把表达式赋给它，之后从不读取。求值照做，结果没人用，死存储由 SSA 清掉。
+
+这个差别是实测出来的，不是设计时想到的：第一版两种都直接当语句，`answer;` 立刻让编译器内部报错。判断依据是 NIR 里被丢弃表达式是不是对 `void` 函数的直接调用——只有这一种能省掉临时变量。
+
 ## 构造结果长什么样
 
 `examples/ir/add.nir.json` 生成的 `main.add` 只有两条指令：

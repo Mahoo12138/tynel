@@ -21,6 +21,7 @@ func binary(op string, left, right Expr) Expr {
 func ret(e Expr) Stmt       { return Stmt{Op: OpReturn, Value: &e} }
 func retVoid() Stmt         { return Stmt{Op: OpReturn} }
 func printStmt(e Expr) Stmt { return Stmt{Op: OpPrint, Value: &e} }
+func discard(e Expr) Stmt   { return Stmt{Op: OpDiscard, Value: &e} }
 
 func fn(name, result string, params []string, body ...Stmt) Function {
 	f := Function{Name: name, Result: result, Body: body}
@@ -66,6 +67,17 @@ func TestVerifyEmptyVoidEntry(t *testing.T) {
 	}
 }
 
+// TestVerifyDiscard 确认「求值但丢弃」对两种结果都成立：number 表达式可以丢，
+// void 调用也可以丢，而且丢弃不改变函数的返回要求。
+func TestVerifyDiscard(t *testing.T) {
+	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
+	sevenFn := fn("seven", TypeNumber, nil, ret(num(7)))
+	m := module("main", mainWith(discard(num(1)), discard(call("seven")), discard(call("log"))), logFn, sevenFn)
+	if err := Verify(m); err != nil {
+		t.Fatalf("丢弃 number 与 void 调用都应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -92,6 +104,7 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		{"print 一个 void 调用", module("main", mainWith(printStmt(call("log"))), logFn), "nir.print-type"},
 		{"运算符操作数是 void 调用", module("main", mainWith(printStmt(binary("+", call("log"), num(1)))), logFn), "nir.operand-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},
+		{"discard 引用未知局部值", module("main", mainWith(discard(Expr{Op: OpLocal, Name: "x"}))), "nir.unknown-local"},
 	}
 
 	for _, c := range cases {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 )
 
 // tynelNumberFromBits 按位构造一个 number。go/constant 表示不了 NaN、
@@ -19,8 +20,33 @@ func tynelNumberFromBits(bits uint64) float64 {
 	return math.Float64frombits(bits)
 }
 
+// tynelFormatNumber 把 binary64 写成一行文本。
+//
+// 有限值用最短且可回读的十进制写法（strconv 的 'g' 格式、精度 -1），所以
+// 0.1 + 0.2 输出 0.30000000000000004，而不是四舍五入后的 0.3。四个特殊值
+// 用固定拼写，避免不同格式化路径给出不同结果。
+//
+// 这套拼写是本阶段自定的，不是 JavaScript console.log 的协议：那边无穷写作
+// Infinity，负零也写作 -0，而这里的 +Inf / -Inf 沿用 Go 的写法。接上完整的
+// 数值语义时（03.x）会一并改。
+func tynelFormatNumber(v float64) string {
+	switch {
+	case math.IsNaN(v):
+		return "NaN"
+	case math.IsInf(v, 1):
+		return "+Inf"
+	case math.IsInf(v, -1):
+		return "-Inf"
+	case v == 0 && math.Signbit(v):
+		return "-0"
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
+}
+
 // tynelPrintFloat64 是 NIR 里 print 语句的目标。
-// binary64 按 Go 的默认格式输出：42 打印成 42，0.5 打印成 0.5。
+//
+// 每次调用写一行，行尾一个换行符。它是受限输出，不是 Node 的 console：
+// 只接受一个 number，没有格式化占位符，也不写标准错误。
 func tynelPrintFloat64(v float64) {
-	fmt.Fprintln(os.Stdout, v)
+	fmt.Fprintln(os.Stdout, tynelFormatNumber(v))
 }

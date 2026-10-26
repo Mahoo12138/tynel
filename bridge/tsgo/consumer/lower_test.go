@@ -118,8 +118,69 @@ func TestLowerSameNamedParameters(t *testing.T) {
 	}
 }
 
+// TestLowerVoidFunction 覆盖 void 函数：函数体以空 return 结束，调用点变成
+// 丢弃结果的语句。
+func TestLowerVoidFunction(t *testing.T) {
+	_, module := lowerFixture(t, fixturePath(t, "void.ts"))
+	announce := module.Functions[0]
+	if announce.Name != "announce" || announce.Result != nir.TypeVoid {
+		t.Fatalf("announce 应为 void 函数：%+v", announce)
+	}
+	if got := announce.Body[len(announce.Body)-1]; got.Op != nir.OpReturn || got.Value != nil {
+		t.Fatalf("void 函数应以空 return 结束：%+v", got)
+	}
+	main := module.Functions[1]
+	if len(main.Body) != 3 {
+		t.Fatalf("main 应有两条调用语句加一条 return，实际 %d：%+v", len(main.Body), main.Body)
+	}
+	for i := 0; i < 2; i++ {
+		if got := main.Body[i]; got.Op != nir.OpDiscard || got.Value.Op != nir.OpCall || got.Value.Function != "announce" {
+			t.Fatalf("第 %d 条应为 discard 调用 announce：%+v", i+1, got)
+		}
+	}
+}
+
+// TestLowerDiscardedExpressions 确认 `answer;` 与 `add(1, 2);` 都只是求值，
+// 不会变成 print。
+func TestLowerDiscardedExpressions(t *testing.T) {
+	_, module := lowerFixture(t, fixturePath(t, "discard.ts"))
+	main := module.Functions[len(module.Functions)-1]
+	if len(main.Body) != 5 {
+		t.Fatalf("main 应有 5 条语句，实际 %d：%+v", len(main.Body), main.Body)
+	}
+	if got := main.Body[1]; got.Op != nir.OpDiscard || got.Value.Op != nir.OpLocal || got.Value.Name != "answer" {
+		t.Fatalf("第二条应为 discard 局部值 answer：%+v", got)
+	}
+	if got := main.Body[2]; got.Op != nir.OpDiscard || got.Value.Op != nir.OpCall || got.Value.Function != "add" {
+		t.Fatalf("第三条应为 discard 调用 add：%+v", got)
+	}
+	for _, stmt := range main.Body {
+		if stmt.Op == nir.OpPrint && stmt.Value.Op != nir.OpLocal {
+			t.Fatalf("只有最后一行 console.log(answer) 应当打印：%+v", stmt)
+		}
+	}
+}
+
+// TestLowerOutputProgram 确认输出格式夹具降低成五条 print。
+func TestLowerOutputProgram(t *testing.T) {
+	_, module := lowerFixture(t, fixturePath(t, "output.ts"))
+	main := module.Functions[0]
+	prints := 0
+	for _, stmt := range main.Body {
+		if stmt.Op == nir.OpPrint {
+			prints++
+		}
+	}
+	if prints != 5 {
+		t.Fatalf("应有 5 条 print，实际 %d：%+v", prints, main.Body)
+	}
+}
+
 func TestLoweredModulesVerify(t *testing.T) {
-	for _, name := range []string{"add.ts", "lower/order.ts", "lower/negzero.ts", "lower/forward.ts", "lower/same-name.ts"} {
+	for _, name := range []string{
+		"add.ts", "void.ts", "discard.ts", "output.ts",
+		"lower/order.ts", "lower/negzero.ts", "lower/forward.ts", "lower/same-name.ts",
+	} {
 		t.Run(name, func(t *testing.T) {
 			_, module := lowerFixture(t, fixturePath(t, name))
 			if err := nir.Verify(module); err != nil {

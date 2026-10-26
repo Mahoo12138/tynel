@@ -73,10 +73,39 @@ NIR 只有函数，没有顶层语句。降低因此造一个 `main`：
 | --- | --- |
 | 顶层 `const` | 按源码顺序生成 `let` |
 | 顶层 `console.log(x)` | `print` |
+| 顶层 `f();` / `answer;` | `discard` |
 | 函数声明 | 同名的 NIR 函数，按声明顺序排列 |
 | 入口本身 | 追加在最后的 `main`，无参数、返回 `void` |
 
 用户函数不能叫 `main`，否则与入口冲突，降低报 `lower.entry-conflict`。
+
+## 调用、丢弃与打印
+
+源码里三种「一行只有一个表达式」的写法看起来很像，落到 NIR 是三件不同的事：
+
+| 源码 | NIR | 结果去哪 |
+| --- | --- | --- |
+| `f();` | `discard` 调用 | 执行，结果丢弃 |
+| `answer;` | `discard` 局部值 | 求值，结果丢弃，不打印 |
+| `console.log(answer);` | `print` | 执行并写一行输出 |
+
+`discard` 不是「什么都不做」。调用可能带副作用——`announce(7)` 里可能打印——所以求值必须发生；但表达式语句的语义是「值没人要」，因此不能顺手把它打印出去。`answer;` 就是最容易看出区别的例子：它求值成一个 number，然后丢掉，屏幕上什么都不该出现。
+
+bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是语句形状，直接放进函数体；`number` 表达式需要一个承接结果的位置，赋给一个从不读取的临时变量（详见 [bridge 说明](bridge.md)）。
+
+## void 函数
+
+`function announce(n: number): void { ... }` 降到同名的 `void` 函数。它有三种正常结束方式，都在降低阶段处理：
+
+| 源码 | 降到 |
+| --- | --- |
+| `return;` | 空 `return` |
+| 函数体最后一条语句之后自然结束 | 补一条空 `return` |
+| 显式 `return value` | 拒绝：`lower.void-value` |
+
+补空 `return` 不是装饰。Go 编译器把「没有函数体」当成外部声明，一条语句都没有的函数只生成符号、不生成代码，链接时会报 `function main is undeclared`——01.05 已经踩过这个坑。降低保证每个 `void` 函数至少有一条 `return`。
+
+反过来，返回 `number` 的函数里写 `return;` 也是拒绝（`lower.missing-value`）。这两条 TypeScript 自己也会报错，降低再拦一次是因为它不假设事实一定来自刚跑过的检查器。
 
 ## 求值顺序
 
@@ -106,6 +135,8 @@ NIR 只有函数，没有顶层语句。降低因此造一个 `main`：
 | `lower.unknown-callee` | 调用目标不是本文件里的函数 |
 | `lower.entry-conflict` | 用户函数占用了 `main` |
 | `lower.missing-return` | 返回 `number` 的函数没有以 `return` 结束 |
+| `lower.missing-value` | 返回 `number` 的函数里 `return` 不带值 |
+| `lower.void-value` | `void` 函数的 `return` 带返回值 |
 | `lower.unsupported-statement` | 函数体或模块体里出现不支持的语句 |
 | `lower.unsupported-expr` | 不支持的表达式种类 |
 | `lower.bad-literal` | 数字字面量缺少位模式或位模式非法 |

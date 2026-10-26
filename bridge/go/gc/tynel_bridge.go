@@ -151,6 +151,7 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsH
 	}
 
 	body := make([]ir.Node, 0, len(f.Body))
+	discarded := 0
 	for _, s := range f.Body {
 		switch s.Op {
 		case "return":
@@ -179,6 +180,23 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsH
 			local := fn.NewLocal(pos, sym, types.Types[types.TFLOAT64])
 			locals[s.Name] = local
 			body = append(body, ir.NewAssignStmt(pos, local, v))
+		case "discard":
+			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
+			if err != nil {
+				return err
+			}
+			if isVoidCall(s.Value, funcs) {
+				// void 调用本身就是语句形状，直接放进函数体。
+				body = append(body, v)
+				break
+			}
+			// 数值表达式不能裸着当语句：一个光秃秃的变量名会让编译器报
+			// "unexpected stmt"。赋给一个从不读取的临时变量，求值照做，
+			// 结果丢掉；死存储由 SSA 清掉。
+			discarded++
+			sym := &types.Sym{Name: fmt.Sprintf("_tynel_discard_%d", discarded), Pkg: types.LocalPkg}
+			tmp := fn.NewLocal(pos, sym, types.Types[types.TFLOAT64])
+			body = append(body, ir.NewAssignStmt(pos, tmp, v))
 		case "print":
 			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
 			if err != nil {
@@ -264,6 +282,19 @@ func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir
 	default:
 		return nil, fmt.Errorf("不支持的表达式 op %q", e.Op)
 	}
+}
+
+// isVoidCall 报告一个 NIR 表达式是不是对 void 函数的直接调用。只有它可以直接
+// 作为语句；其他表达式需要一个承接结果的位置。
+func isVoidCall(e *expr, funcs map[string]*ir.Func) bool {
+	if e == nil || e.Op != "call" {
+		return false
+	}
+	callee, ok := funcs[e.Function]
+	if !ok {
+		return false
+	}
+	return len(callee.Type().Results()) == 0
 }
 
 // needsBits 报告一个值是否必须按位构造：负零、NaN 和正负无穷。

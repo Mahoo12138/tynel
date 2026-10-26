@@ -81,6 +81,7 @@ type lowerer struct {
 	snapshot *source.Snapshot
 	facts    *frontend.Facts
 	names    map[int]string // 函数声明 ID → NIR 函数名
+	result   string         // 当前正在降低的函数的返回类型
 }
 
 // scope 是当前可见的声明。用声明 ID 而不是名字做键：两个函数里同名的参数是
@@ -94,6 +95,9 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 	if decl.Result == nil {
 		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 缺少返回类型摘要", decl.Name)
 	}
+	if decl.Result.Kind != frontend.KindNumber && decl.Result.Kind != frontend.KindVoid {
+		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 的返回类型是 %s，本阶段只支持 number 与 void", decl.Name, decl.Result.Kind)
+	}
 	fn := &nir.Function{
 		Name:   decl.Name,
 		Result: nirType(decl.Result.Kind),
@@ -105,12 +109,17 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 		if !ok || param.Kind != frontend.DeclParameter {
 			return nil, l.fail(decl.Start, "lower.unknown-param", "函数 %q 的参数 ID %d 不存在", decl.Name, id)
 		}
+		if param.Type == nil || param.Type.Kind != frontend.KindNumber {
+			return nil, l.fail(param.Start, "lower.bad-type", "参数 %q 不是 number，本阶段只支持 number 参数", param.Name)
+		}
 		fn.Params = append(fn.Params, nir.Param{Name: param.Name, Type: nir.TypeNumber, Pos: l.pos(param.Start)})
 		sc.params[id] = param.Name
 	}
 	if decl.Body == nil {
 		return nil, l.fail(decl.Start, "lower.missing-body", "函数 %q 没有函数体", decl.Name)
 	}
+	l.result = fn.Result
+	defer func() { l.result = "" }()
 	body, err := l.block(decl.Body, sc, fn.Result)
 	if err != nil {
 		return nil, err
@@ -192,10 +201,16 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
 	switch stmt.Kind {
 	case "ReturnStatement":
 		if len(stmt.Children) == 0 {
+			if l.result == nir.TypeNumber {
+				return nir.Stmt{}, l.fail(stmt.Start, "lower.missing-value", "返回 number 的函数里 return 必须带值")
+			}
 			return nir.Stmt{Op: nir.OpReturn, Pos: l.pos(stmt.Start)}, nil
 		}
 		if len(stmt.Children) > 1 {
 			return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-arity", "return 有 %d 个值", len(stmt.Children))
+		}
+		if l.result == nir.TypeVoid {
+			return nir.Stmt{}, l.fail(stmt.Start, "lower.void-value", "void 函数的 return 不能带返回值")
 		}
 		if err := l.numberOperand(&stmt.Children[0], "返回值"); err != nil {
 			return nir.Stmt{}, err
@@ -209,18 +224,25 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
 		if len(stmt.Children) != 1 {
 			return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-arity", "表达式语句有 %d 个子节点", len(stmt.Children))
 		}
-		arg, ok, err := l.consoleLog(&stmt.Children[0])
+		inner := &stmt.Children[0]
+		arg, ok, err := l.consoleLog(inner)
 		if err != nil {
 			return nir.Stmt{}, err
 		}
-		if !ok {
-			return nir.Stmt{}, l.fail(stmt.Start, "lower.unsupported-statement", "只有 console.log 可以单独成句")
+		if ok {
+			value, err := l.expr(arg, sc, 1)
+			if err != nil {
+				return nir.Stmt{}, err
+			}
+			return nir.Stmt{Op: nir.OpPrint, Value: value, Pos: l.pos(stmt.Start)}, nil
 		}
-		value, err := l.expr(arg, sc, 1)
+		// 其余表达式语句求值后丢弃结果：`f();` 的副作用要保留，`answer;`
+		// 不打印任何东西。两条要求都落在 discard 上。
+		value, err := l.expr(inner, sc, 1)
 		if err != nil {
 			return nir.Stmt{}, err
 		}
-		return nir.Stmt{Op: nir.OpPrint, Value: value, Pos: l.pos(stmt.Start)}, nil
+		return nir.Stmt{Op: nir.OpDiscard, Value: value, Pos: l.pos(stmt.Start)}, nil
 	default:
 		return nir.Stmt{}, l.fail(stmt.Start, "lower.unsupported-statement", "语句 %s 不在本阶段子集内", stmt.Kind)
 	}

@@ -45,10 +45,15 @@ const (
 // let 定义一个局部值，供后续语句按名字读取。它不是语言层面的变量：前端把
 // 模块级 const 和中间结果落到这里，避免在表达式里重复求值。同名重复定义和
 // 先读后定义都由验证器拒绝。
+//
+// discard 求值一个表达式并丢弃结果。源码里 `f();` 和 `answer;` 都是这个形状：
+// 调用可能带副作用，必须执行；值没人要，不能顺手打印出去。丢弃的是结果，
+// 不是求值本身。
 const (
-	OpReturn = "return"
-	OpPrint  = "print"
-	OpLet    = "let"
+	OpReturn  = "return"
+	OpPrint   = "print"
+	OpLet     = "let"
+	OpDiscard = "discard"
 )
 
 // BinaryOperators 是首版允许的二元运算符，顺序用于报错提示。

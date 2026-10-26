@@ -197,17 +197,20 @@ func (m *Module) check(limits Limits) error {
 			spath := fmt.Sprintf("%s.body[%d]", path, j)
 			nodes++
 			switch s.Op {
-			case OpReturn, OpPrint, OpLet:
+			case OpReturn, OpPrint, OpLet, OpDiscard:
 			case "":
 				return badf("nir.missing", "%s 缺少 op", spath)
 			default:
-				return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print 或 let", spath, s.Op)
+				return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let 或 discard", spath, s.Op)
 			}
 			if s.Op != OpLet && s.Name != "" {
 				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 name", spath, s.Op)
 			}
 			if s.Op == OpPrint && s.Value == nil {
 				return badf("nir.missing", "%s 的 print 缺少 value", spath)
+			}
+			if s.Op == OpDiscard && s.Value == nil {
+				return badf("nir.missing", "%s 的 discard 缺少 value", spath)
 			}
 			if s.Op == OpLet {
 				if s.Name == "" {

@@ -5,8 +5,8 @@
 #
 # 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
-# 缺失被拒、声明事实、原生能力白名单、void 与丢弃结果、输出格式，以及从源码
-# 降低到可运行的原生程序。
+# 缺失被拒、声明事实、原生能力白名单、void 与丢弃结果、输出格式、从源码降低
+# 到可运行的原生程序，以及主命令行的 check、build、run、dump。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -319,6 +319,121 @@ OUTPY
     fail "手写 NIR 无法编译"
   fi
   rm -rf "$tmp"
+fi
+
+
+# 14. 主命令行：check、build、run、dump 走同一条流程
+CLI="$ROOT/bin/tynel"
+if [[ ! -x "$CLI" ]]; then
+  (cd "$ROOT" && ./tools/build >/dev/null 2>&1) || true
+fi
+if [[ ! -x "$CLI" ]]; then
+  fail "找不到 bin/tynel，无法验收主命令行"
+else
+  cli_tmp=$(mktemp -d)
+  out=$("$CLI" check "$ROOT/bridge/tsgo/testdata/add.ts" 2>&1); code=$?
+  if [[ $code -eq 0 ]] && print -- "$out" | grep -q '^ok:'; then
+    pass "check 通过并报告 NIR 已验证"
+  else
+    fail "check 应退出 0 并打印 ok，实际退出 $code：$out"
+  fi
+
+  out=$("$CLI" check "$ROOT/bridge/tsgo/testdata/bad.ts" 2>&1); code=$?
+  if [[ $code -eq 1 ]] && print -- "$out" | grep -q 'TS2322'; then
+    pass "check 把源码错误映射为退出 1"
+  else
+    fail "源码错误应退出 1，实际 $code：$out"
+  fi
+
+  out=$("$CLI" check "$ROOT/bridge/tsgo/testdata/capability/void-value.ts" 2>&1); code=$?
+  if [[ $code -eq 3 ]] && print -- "$out" | grep -q 'cap.void-value'; then
+    pass "check 把能力限制映射为退出 3"
+  else
+    fail "能力限制应退出 3，实际 $code：$out"
+  fi
+
+  "$CLI" check "$ROOT/bridge/tsgo/testdata/add.ts" --json >"$cli_tmp/check.json" 2>"$cli_tmp/err"; code=$?
+  if [[ $code -eq 0 ]] && python3 - "$cli_tmp/check.json" <<'JSONPY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["summary"]["verified"] is True
+JSONPY
+  then
+    pass "check --json 输出可解析"
+  else
+    fail "check --json 的输出不可解析"
+  fi
+
+  if "$CLI" build "$ROOT/bridge/tsgo/testdata/add.ts" -o "$cli_tmp/app" >/dev/null 2>&1 && [[ "$("$cli_tmp/app")" == "42" ]]; then
+    pass "一条 build 生成原生 42"
+  else
+    fail "build 未能生成可运行的原生程序"
+  fi
+  if [[ -f "$cli_tmp/app.build.json" ]] && python3 -c "import json,sys; d=json.load(open('$cli_tmp/app.build.json')); assert d['source']['path'].endswith('add.ts'); assert d['input']['sha256']" 2>/dev/null; then
+    pass "构建记录同时记下源码与 NIR 身份"
+  else
+    fail "构建记录缺少源码或 NIR 身份"
+  fi
+
+  out=$("$CLI" run "$ROOT/bridge/tsgo/testdata/add.ts" 2>/dev/null); code=$?
+  if [[ $code -eq 0 && "$out" == "42" ]]; then
+    pass "run 编译并运行本次产物"
+  else
+    fail "run 应输出 42 并退出 0，实际退出 $code：$out"
+  fi
+
+  if "$CLI" dump nir "$ROOT/bridge/tsgo/testdata/add.ts" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['entry']=='main'" 2>/dev/null; then
+    pass "dump nir 输出可解析"
+  else
+    fail "dump nir 输出不可解析"
+  fi
+  if "$CLI" dump facts "$ROOT/bridge/tsgo/testdata/add.ts" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['declarations']" 2>/dev/null; then
+    pass "dump facts 输出可解析"
+  else
+    fail "dump facts 输出不可解析"
+  fi
+
+  # run 构建失败后不执行已有产物：先放一个会打印 STALE 的假产物。
+  mkdir -p "$ROOT/.work/run"
+  printf '#!/bin/sh\necho STALE\n' > "$ROOT/.work/run/app"
+  chmod +x "$ROOT/.work/run/app"
+  out=$("$CLI" run "$ROOT/bridge/tsgo/testdata/bad.ts" 2>&1); code=$?
+  if [[ $code -eq 1 ]] && ! print -- "$out" | grep -q STALE; then
+    pass "run 在构建失败后不执行已有产物"
+  else
+    fail "run 不应执行旧产物，实际退出 $code：$out"
+  fi
+  rm -f "$ROOT/.work/run/app"
+
+  # 不可写输出：环境缺失，与源码错误分开。
+  mkdir -p "$cli_tmp/ro"
+  chmod 555 "$cli_tmp/ro"
+  "$CLI" build "$ROOT/bridge/tsgo/testdata/add.ts" -o "$cli_tmp/ro/app" >/dev/null 2>&1; code=$?
+  chmod 755 "$cli_tmp/ro"
+  if [[ $code -eq 4 ]]; then
+    pass "不可写输出按环境缺失退出 4"
+  else
+    fail "不可写输出应退出 4，实际 $code"
+  fi
+
+  # check 不依赖后端：把修改版编译器移走，check 仍通过，build 变环境缺失。
+  moved=0
+  if [[ -f "$ROOT/.work/bridge/compile" ]]; then
+    mv "$ROOT/.work/bridge/compile" "$cli_tmp/compile.away"
+    moved=1
+  fi
+  "$CLI" check "$ROOT/bridge/tsgo/testdata/add.ts" >/dev/null 2>&1; code=$?
+  "$CLI" build "$ROOT/bridge/tsgo/testdata/add.ts" -o "$cli_tmp/nobackend" >/dev/null 2>&1; build_code=$?
+  if [[ $moved -eq 1 ]]; then
+    mv "$cli_tmp/compile.away" "$ROOT/.work/bridge/compile"
+  fi
+  if [[ $code -eq 0 && $build_code -eq 4 ]]; then
+    pass "check 不依赖后端，build 缺后端按环境缺失退出 4"
+  else
+    fail "check 应通过（0）且 build 应报环境缺失（4），实际 $code / $build_code"
+  fi
+
+  rm -rf "$cli_tmp"
 fi
 
 print -- ""

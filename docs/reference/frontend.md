@@ -74,6 +74,34 @@ replace github.com/microsoft/typescript-go => ../../../.work/frontend/typescript
 
 `replace` 指向 `.work`，因此全新克隆要先运行准备命令；这是有意为之——前端源码不进版本库，身份由锁文件与归档哈希保证。
 
+## 主命令行怎样使用宿主
+
+`tynel check`、`build`、`run` 和 `dump` 都不导入适配包：仓库根模块不能依赖上游，否则没准备前端源码的人连 `go test ./...` 都跑不起来。它们启动宿主子进程，用一份 JSON 把结果取回来。
+
+宿主的生命周期由 `internal/host` 管：
+
+- 宿主二进制固定在 `.work/frontend/bin/consumer`，旁边有一份戳记，记录二进制自身与全部源码文件（消费者模块的 `.go`、`go.mod`、`go.sum` 和适配包源码）的 sha256。
+- 戳记不匹配、二进制缺失，或者源码树里的适配包副本与 `bridge/tsgo/_adapter` 不一致时，命令行先重建或直接拒绝。用旧宿主检查新代码，结论不可信。
+- 重建用隔离工具链的 `go`，模块缓存放在 `.work/frontend/gomodcache`，代理默认 `https://goproxy.cn`，可用 `TYNEL_GOPROXY` 覆盖。进度写到标准错误。
+
+结果协议在 `compiler/pipeline`：
+
+```json
+{
+  "schemaVersion": 1,
+  "file": "/…/add.ts",
+  "sourceSha256": "1099c3c9…",
+  "sourceBytes": 209,
+  "diagnostics": [],
+  "capability": [],
+  "summary": {"functions": 2, "verified": true}
+}
+```
+
+`summary.verified` 为真表示 NIR 通过了验证器。`facts` 与 `nir` 按需附带：`check` 不带，`build` 带 NIR，`dump` 带其中一份。协议解码拒绝未知字段——少改一边会立刻失败，而不是悄悄丢字段。
+
+宿主只在产出了结果时退出 0，结论（源码错误、能力限制）写在结果里；调用方按内容决定退出状态，因此不会出现「JSON 说失败但退出 0」的分裂。真正取不到结果时才用 4 或 5。
+
 ## 上游升级时改什么
 
 1. 改 `frontend` 段的 `version`、`commit`、`archive`（新归档的 url、sha256、size）、`archiveRoot`；

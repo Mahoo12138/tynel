@@ -302,9 +302,57 @@ func TestRunRejectsCorruptSnapshot(t *testing.T) {
 	}
 }
 
+// TestRunAcceptsInMemoryNIR 覆盖「NIR 在内存里」的构建：没有用户可见的输入
+// 文件，记录里的 input 指向实际被编译的快照，source 单独记源码身份。
+func TestRunAcceptsInMemoryNIR(t *testing.T) {
+	root, runner := newProject(t)
+	runner.writeOutput = true
+	output := filepath.Join(root, "out", "app")
+	source := &Source{Path: "bridge/tsgo/testdata/add.ts", SHA256: sha256Hex([]byte("source")), Bytes: 6}
+
+	record, err := Run(Options{Root: root, InputData: exampleNIR(t), Output: output, Source: source}, runner)
+	if err != nil {
+		t.Fatalf("内存 NIR 构建失败：%v", err)
+	}
+	if record.Source == nil || record.Source.Path != source.Path {
+		t.Errorf("记录里的源码身份不对：%+v", record.Source)
+	}
+	if !strings.Contains(record.Input.Path, ".work/build/snapshots/") {
+		t.Errorf("input 应指向快照：%q", record.Input.Path)
+	}
+	if record.Input.SHA256 != sha256Hex(exampleNIR(t)) {
+		t.Errorf("input 哈希不符")
+	}
+	if _, err := os.Stat(record.Input.Path); err != nil {
+		t.Errorf("记录指向的快照不存在：%v", err)
+	}
+}
+
+// TestRunRemovesArtifactWhenRecordFails 确认「没有记录的产物不留」。
+func TestRunRemovesArtifactWhenRecordFails(t *testing.T) {
+	root, runner := newProject(t)
+	runner.writeOutput = true
+	output := filepath.Join(root, "out", "app")
+	// 用一个同名目录占住记录路径，让写记录必然失败。
+	if err := os.MkdirAll(RecordPath(output), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(Options{Root: root, InputData: exampleNIR(t), Output: output}, runner)
+	if err == nil {
+		t.Fatal("记录写不进去时应失败")
+	}
+	if got := diagnostic.ExitCode(err); got != diagnostic.ExitEnvironment {
+		t.Errorf("退出状态为 %d，期望 %d", got, diagnostic.ExitEnvironment)
+	}
+	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
+		t.Errorf("记录失败后产物应被删除")
+	}
+}
+
 func TestRunRejectsMissingArguments(t *testing.T) {
 	_, runner := newProject(t)
-	for _, opts := range []Options{{}, {Root: "x"}, {Root: "x", Input: "y"}} {
+	for _, opts := range []Options{{}, {Root: "x"}, {Root: "x", Input: "y"}, {Root: "x", Output: "y"}} {
 		if err := func() error { _, err := Run(opts, runner); return err }(); diagnostic.ExitCode(err) != diagnostic.ExitUsage {
 			t.Errorf("%+v：应返回用法错误", opts)
 		}

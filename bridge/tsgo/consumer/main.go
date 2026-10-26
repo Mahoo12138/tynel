@@ -9,9 +9,14 @@
 //	consumer -facts <file.ts>      输出前端事实 JSON（开发接口）
 //	consumer -capability <file.ts> 先查源码，再查原生能力；有越界写法时退出 3
 //	consumer -nir <file.ts>       输出降低后的 NIR（开发接口）
+//	consumer -pipeline -want=<check|build|facts|nir> <file.ts>
+//	                              输出主命令行使用的一次性结果；只要产出了结果
+//	                              就退出 0，结论由结果里的诊断与能力项表达
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,30 +28,18 @@ import (
 	"github.com/Mahoo12138/tynel/compiler/frontend"
 	"github.com/Mahoo12138/tynel/compiler/lower"
 	"github.com/Mahoo12138/tynel/compiler/nir"
+	"github.com/Mahoo12138/tynel/compiler/pipeline"
 	"github.com/Mahoo12138/tynel/compiler/source"
 	"github.com/microsoft/typescript-go/tyneladapter"
 )
-
-// output 是宿主对外的诊断形状。字段比 compiler/source 的结构更平，方便脚本
-// 直接取 line、column；行列从位置换算得来，字节区间单独保留。
-type output struct {
-	File      string `json:"file"`
-	Line      int    `json:"line"`
-	Column    int    `json:"column"`
-	EndLine   int    `json:"endLine"`
-	EndColumn int    `json:"endColumn"`
-	Start     int    `json:"start"`
-	Length    int    `json:"length"`
-	Severity  string `json:"severity"`
-	Code      int32  `json:"code"`
-	Message   string `json:"message"`
-}
 
 func main() {
 	quiet := flag.Bool("quiet", false, "只输出摘要")
 	facts := flag.Bool("facts", false, "输出前端事实而不是诊断")
 	capabilityCheck := flag.Bool("capability", false, "检查程序是否落在原生子集内")
 	nirOut := flag.Bool("nir", false, "输出降低后的 NIR")
+	pipelineOut := flag.Bool("pipeline", false, "输出主命令行使用的一次性结果")
+	want := flag.String("want", "check", "pipeline 附带的内容：check、build、facts 或 nir")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "用法：consumer [-quiet] <file.ts>")
 	}
@@ -66,6 +59,11 @@ func main() {
 	snapshot, err := source.Read(path, source.DefaultLimits())
 	if err != nil {
 		report(err)
+	}
+
+	if *pipelineOut {
+		runPipeline(snapshot, *want)
+		return
 	}
 
 	if *facts {
@@ -96,7 +94,7 @@ func main() {
 	}
 
 	errors := 0
-	items := make([]output, 0, len(diagnostics))
+	items := make([]pipeline.Diagnostic, 0, len(diagnostics))
 	for _, d := range diagnostics {
 		if d.Severity == source.SeverityError {
 			errors++
@@ -117,6 +115,84 @@ func main() {
 	if errors > 0 {
 		os.Exit(diagnostic.ExitSource)
 	}
+}
+
+// runPipeline 一次走完检查、能力判断和降低，把结果整体写给主命令行。
+//
+// 与 -capability、-nir 不同，它总是退出 0：结论写在结果里（诊断、能力项、
+// 是否通过验证），调用方按内容决定退出状态。这样一份结果只有一个来源，不会
+// 出现「JSON 说失败但退出 0」之类的分裂。只有真正取不到结果时才非零退出。
+func runPipeline(snapshot *source.Snapshot, want string) {
+	switch want {
+	case "check", "build", "facts", "nir":
+	default:
+		fmt.Fprintf(os.Stderr, "want 只接受 check、build、facts 或 nir，收到 %q\n", want)
+		os.Exit(diagnostic.ExitUsage)
+	}
+
+	result := &pipeline.Result{
+		SchemaVersion: pipeline.SchemaVersion,
+		File:          snapshot.Path(),
+		SourceSHA256:  sha256Hex(snapshot.Bytes()),
+		SourceBytes:   len(snapshot.Bytes()),
+		Diagnostics:   []pipeline.Diagnostic{},
+		Capability:    []pipeline.Finding{},
+	}
+
+	diagnostics, err := check(snapshot)
+	if err != nil {
+		report(err)
+	}
+	for _, d := range diagnostics {
+		result.Diagnostics = append(result.Diagnostics, flatten(d))
+	}
+	if result.HasSourceErrors() {
+		writeJSON(result)
+		return
+	}
+
+	facts, err := factsOf(snapshot)
+	if err != nil {
+		report(err)
+	}
+	if want == "facts" {
+		result.Facts = facts
+	}
+
+	findings, err := capability.Check(snapshot, facts)
+	if err != nil {
+		report(err)
+	}
+	for _, d := range findings {
+		result.Capability = append(result.Capability, pipeline.Finding{
+			File:     d.File,
+			Line:     d.Line,
+			Column:   d.Column,
+			Category: d.Category.String(),
+			Code:     d.Code,
+			Message:  d.Message,
+		})
+	}
+	if len(findings) > 0 {
+		writeJSON(result)
+		return
+	}
+
+	module, err := lower.Lower(snapshot, facts)
+	if err != nil {
+		report(err)
+	}
+	result.Summary.Functions = len(module.Functions)
+	result.Summary.Verified = true
+	if want == "build" || want == "nir" {
+		result.NIR = module
+	}
+	writeJSON(result)
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // runCapability 先做源码检查，再做能力检查。
@@ -195,21 +271,10 @@ func factsOf(snapshot *source.Snapshot) (*frontend.Facts, error) {
 	return frontend.Decode(raw)
 }
 
-// finding 是能力诊断的对外形状。错误码是字符串（cap.*），与 TypeScript 的
-// 数字错误码不同，所以单独一个结构。
-type finding struct {
-	File     string `json:"file"`
-	Line     int    `json:"line"`
-	Column   int    `json:"column"`
-	Category string `json:"category"`
-	Code     string `json:"code"`
-	Message  string `json:"message"`
-}
-
 func emitFindings(findings []*diagnostic.Diagnostic) {
-	items := make([]finding, 0, len(findings))
+	items := make([]pipeline.Finding, 0, len(findings))
 	for _, d := range findings {
-		items = append(items, finding{
+		items = append(items, pipeline.Finding{
 			File:     d.File,
 			Line:     d.Line,
 			Column:   d.Column,
@@ -222,7 +287,7 @@ func emitFindings(findings []*diagnostic.Diagnostic) {
 }
 
 func emitDiagnostics(diagnostics []source.Diagnostic) {
-	items := make([]output, 0, len(diagnostics))
+	items := make([]pipeline.Diagnostic, 0, len(diagnostics))
 	for _, d := range diagnostics {
 		items = append(items, flatten(d))
 	}
@@ -287,8 +352,8 @@ func convert(in []tyneladapter.Diagnostic) []source.FrontendDiagnostic {
 	return out
 }
 
-func flatten(d source.Diagnostic) output {
-	return output{
+func flatten(d source.Diagnostic) pipeline.Diagnostic {
+	return pipeline.Diagnostic{
 		File:      d.Location.Path,
 		Line:      d.Location.Start.Line,
 		Column:    d.Location.Start.Column,

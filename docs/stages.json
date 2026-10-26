@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "02.06",
+  "currentImplementationNode": "02.07",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -244,9 +244,12 @@
             "02.06"
           ],
           "planSection": "PLAN.md#task-02-07",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/cli.md",
+            "docs/validation/02-07-cli.md"
+          ]
         },
         {
           "id": "02.08",

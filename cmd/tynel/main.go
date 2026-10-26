@@ -1,14 +1,17 @@
 // Command tynel 是 Tynel 编译器的命令行入口。
 //
-// 当前只提供身份查询与工具链检查。build、check、run 尚未实现，
-// 遇到未知命令一律按用法错误退出，不提供看似可用的空壳。
+// 它负责编排：找项目根、准备前端宿主、按需降低、调用后端、发布产物。它自己
+// 不解析 TypeScript，也不生成机器码——那两件事分别在宿主进程和修改版 Go
+// 编译器里。
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+	"github.com/Mahoo12138/tynel/compiler/pipeline"
 	"github.com/Mahoo12138/tynel/internal/toolchain"
 )
 
@@ -19,11 +22,13 @@ func main() {
 // app 保存一次调用的输出目标和可替换依赖。测试通过替换 runner 和 root
 // 来构造环境缺失、工具不存在等路径，不需要真的改动磁盘上的工具链。
 type app struct {
-	stdout  io.Writer
-	stderr  io.Writer
-	runner  toolchain.Runner
-	root    string
-	hasRoot bool
+	stdout   io.Writer
+	stderr   io.Writer
+	runner   toolchain.Runner
+	program  programRunner
+	frontend func(file, want string) (*pipeline.Result, error)
+	root     string
+	hasRoot  bool
 }
 
 func newApp(stdout, stderr io.Writer) *app {
@@ -39,6 +44,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	a := newApp(stdout, stderr)
 	if err := a.dispatch(args[0], args[1:]); err != nil {
+		var silent silentExit
+		if errors.As(err, &silent) {
+			return silent.code
+		}
 		_ = diagnostic.Write(stderr, err)
 		return diagnostic.ExitCode(err)
 	}
@@ -53,6 +62,14 @@ func (a *app) dispatch(command string, args []string) error {
 		return a.help(args)
 	case "toolchain":
 		return a.toolchainCommand(args)
+	case "check":
+		return a.check(args)
+	case "build":
+		return a.build(args)
+	case "run":
+		return a.run(args)
+	case "dump":
+		return a.dump(args)
 	case "build-ir":
 		return a.buildIR(args)
 	default:

@@ -1,12 +1,21 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查和 02.05 的降低；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出，以及 02.07 的主命令行；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
-`tools/toolchain` 能按锁文件在 `.work/` 内准备 go1.27.3 的 SDK 与源码，以及 TypeScript 前端的源码树，并报告实际使用的 `go`、`compile`、`link`、`asm` 路径。`./tools/build` 生成的 `bin/tynel` 能显示版本与锁定的工具链身份、检查工具是否可用；`tynel build-ir` 能把 NIR 编成原生程序。
+`tools/toolchain` 能按锁文件在 `.work/` 内准备 go1.27.3 的 SDK 与源码，以及 TypeScript 前端的源码树。`./tools/build` 生成的 `bin/tynel` 是主入口：`check` 做类型检查、能力判断与 NIR 验证，`build` 生成原生程序，`run` 编译并运行，`dump` 输出事实或 NIR。
 
-前端目前只能通过 `bridge/tsgo/consumer` 这个外部宿主检查一个 `.ts` 文件，还没有接进 `tynel` 命令：`tynel build` 仍是未知命令，接进主命令要等到 02.07。
+```zsh
+# 一条命令从 TypeScript 得到原生程序。
+./bin/tynel build bridge/tsgo/testdata/add.ts -o out/add
+./out/add
+
+# 只检查，不生成机器码。
+./bin/tynel check bridge/tsgo/testdata/add.ts
+```
+
+首次运行会按需构建前端宿主，需要能访问 Go 模块代理；之后可以离线使用。
 
 ## 前置条件
 
@@ -109,6 +118,8 @@ cat out/add.build.json
 
 ## 前端适配：检查一个 TypeScript 文件
 
+主路径是 `tynel check` / `build` / `run`，它们会自动准备宿主。下面这些命令是开发接口，直接驱动宿主，绕过主命令行：
+
 ```zsh
 # 受控测试驱动：源码身份、消费者测试、干净输入、类型错误、四类拒绝。
 ./bridge/tsgo/check
@@ -157,7 +168,10 @@ go run . -nir ../testdata/output.ts > /tmp/output.nir.json
 | `.work/toolchain/toolchain.json` | 本次准备的报告：锁文件身份、宿主 Go、工具路径、归档校验和 | 能，每次运行重写 |
 | `.work/frontend/typescript-go/` | 解压后的前端源码，含复制进来的 `tyneladapter` | 能，重新解压并同步 |
 | `.work/frontend/gomodcache/` | 前端依赖的模块缓存 | 能，重新下载 |
+| `.work/frontend/bin/consumer` | 前端宿主二进制 | 能，源码变化时命令行自动重建 |
+| `.work/frontend/bin/consumer.stamp.json` | 宿主二进制与源码的哈希 | 能，重建时重写 |
 | `.work/frontend/manifests/typescript-go.json` | 前端来源身份与适配包文件哈希 | 能，重新准备时重写 |
+| `.work/run/app` | `tynel run` 的产物 | 能，每次运行重新构建 |
 | `.work/bin/prep` | 准备入口的编译产物 | 能，包装脚本每次重建 |
 | `bin/tynel` | 开发用的命令行入口 | 能，`./tools/build` 重建 |
 

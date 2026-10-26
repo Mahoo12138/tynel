@@ -29,17 +29,31 @@ const (
 )
 
 // Options 是一次构建的输入。
+//
+// Input 与 InputData 二选一：前者读文件，后者直接用内存里的 NIR 字节。从
+// TypeScript 构建时降低结果在内存里，没必要先落一份用户可见的文件；快照仍会
+// 写到 .work 下，编译器读的始终是快照。
 type Options struct {
-	Root   string // 项目根
-	Input  string // NIR 文件
-	Output string // 产物路径
+	Root      string  // 项目根
+	Input     string  // NIR 文件
+	InputData []byte  // 内存中的 NIR；非空时忽略 Input
+	Output    string  // 产物路径
+	Source    *Source // 可选：源码身份，写进构建记录
+}
+
+// Source 是产生这份 NIR 的源码。从 NIR 文件构建时没有这一项。
+type Source struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Bytes  int    `json:"bytes"`
 }
 
 // Record 是构建记录，成功后写到 <产物>.build.json。
 type Record struct {
-	SchemaVersion  int    `json:"schemaVersion"`
-	StartedAt      string `json:"startedAt"`
-	DurationMillis int64  `json:"durationMillis"`
+	SchemaVersion  int     `json:"schemaVersion"`
+	StartedAt      string  `json:"startedAt"`
+	DurationMillis int64   `json:"durationMillis"`
+	Source         *Source `json:"source,omitempty"`
 	Input          struct {
 		Path   string `json:"path"`
 		SHA256 string `json:"sha256"`
@@ -67,14 +81,19 @@ type Record struct {
 // Run 执行一次构建。失败时返回诊断，且不改动目标位置已有的文件。
 func Run(opts Options, runner toolchain.Runner) (*Record, error) {
 	started := time.Now()
-	if opts.Root == "" || opts.Input == "" || opts.Output == "" {
-		return nil, diagnostic.New(diagnostic.Usage, "build.missing-argument", "构建需要项目根、输入和输出路径")
+	if opts.Root == "" || opts.Output == "" || (len(opts.InputData) == 0 && opts.Input == "") {
+		return nil, diagnostic.New(diagnostic.Usage, "build.missing-argument", "构建需要项目根、NIR 输入和输出路径")
 	}
 
 	// 1. 输入快照：一次读入，后续都用这份字节，构建期间改源文件不影响本次结果。
-	data, err := os.ReadFile(opts.Input)
-	if err != nil {
-		return nil, diagnostic.New(diagnostic.Environment, "build.input-unreadable", "读取 NIR %s 失败", opts.Input).WithDetail(err.Error())
+	data := opts.InputData
+	inputPath := opts.Input
+	if len(data) == 0 {
+		read, err := os.ReadFile(opts.Input)
+		if err != nil {
+			return nil, diagnostic.New(diagnostic.Environment, "build.input-unreadable", "读取 NIR %s 失败", opts.Input).WithDetail(err.Error())
+		}
+		data = read
 	}
 	inputSHA := sha256Hex(data)
 	module, err := nir.DecodeBytes(data, nir.DefaultLimits())
@@ -120,6 +139,11 @@ func Run(opts Options, runner toolchain.Runner) (*Record, error) {
 		return nil, diagnostic.New(diagnostic.Environment, "build.snapshot-failed", "无法读取输入快照").WithDetail(err.Error())
 	} else if err := os.WriteFile(snapshot, data, 0o644); err != nil {
 		return nil, diagnostic.New(diagnostic.Environment, "build.snapshot-failed", "无法写入输入快照").WithDetail(err.Error())
+	}
+	if inputPath == "" {
+		// 内存里的 NIR 没有用户可见的文件路径；记录里写实际被编译的快照，
+		// 而不是一个不存在的名字。
+		inputPath = snapshot
 	}
 
 	// 4. 输出先写到同目录临时文件。
@@ -177,7 +201,8 @@ func Run(opts Options, runner toolchain.Runner) (*Record, error) {
 	// 7. 构建记录。
 	record := &Record{SchemaVersion: 1, StartedAt: started.Format(time.RFC3339)}
 	record.DurationMillis = time.Since(started).Milliseconds()
-	record.Input.Path = opts.Input
+	record.Source = opts.Source
+	record.Input.Path = inputPath
 	record.Input.SHA256 = inputSHA
 	record.Input.Bytes = len(data)
 	record.Toolchain.Version = report.LockedVersion
@@ -192,6 +217,9 @@ func Run(opts Options, runner toolchain.Runner) (*Record, error) {
 	record.Output.SHA256 = outputSHA
 	record.Output.Bytes = info.Size()
 	if err := writeRecord(opts.Output+".build.json", record); err != nil {
+		// 没有记录的产物无法复核来源与哈希，留着比没有更危险：删掉它，
+		// 让这次构建明确失败。
+		os.Remove(opts.Output)
 		return nil, err
 	}
 	return record, nil

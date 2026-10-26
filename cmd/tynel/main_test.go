@@ -153,7 +153,7 @@ func TestNoArgumentsIsUsageError(t *testing.T) {
 
 func TestUnknownCommandIsUsageError(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := run([]string{"build"}, &out, &errOut); code != diagnostic.ExitUsage {
+	if code := run([]string{"frobnicate"}, &out, &errOut); code != diagnostic.ExitUsage {
 		t.Fatalf("退出状态为 %d，期望 %d", code, diagnostic.ExitUsage)
 	}
 	if !strings.Contains(errOut.String(), "未知命令") {
@@ -175,6 +175,17 @@ func TestUsageErrors(t *testing.T) {
 		{"build-ir 缺参数", []string{"build-ir"}},
 		{"build-ir 缺输出", []string{"build-ir", "x.nir.json"}},
 		{"build-ir 未知选项", []string{"build-ir", "-x"}},
+		{"check 缺文件", []string{"check"}},
+		{"check 多余参数", []string{"check", "a.ts", "b.ts"}},
+		{"check 未知选项", []string{"check", "-x", "a.ts"}},
+		{"build 缺文件", []string{"build"}},
+		{"build 缺输出", []string{"build", "a.ts"}},
+		{"build 缺 -o 的值", []string{"build", "a.ts", "-o"}},
+		{"run 缺文件", []string{"run"}},
+		{"run 多余参数", []string{"run", "a.ts", "b.ts"}},
+		{"dump 缺参数", []string{"dump"}},
+		{"dump 未知内容", []string{"dump", "ast", "a.ts"}},
+		{"dump 多余参数", []string{"dump", "facts", "a.ts", "b.ts"}},
 	}
 	for _, c := range cases {
 		var out, errOut bytes.Buffer

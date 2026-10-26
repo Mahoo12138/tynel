@@ -70,6 +70,8 @@ type Node struct {
 	Op       string `json:"op,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Target   int    `json:"target,omitempty"`
+	Decl     int    `json:"decl,omitempty"`
+	Bits     string `json:"bits,omitempty"`
 	Type     *Type  `json:"type,omitempty"`
 	Children []Node `json:"children,omitempty"`
 }
@@ -117,6 +119,7 @@ type Facts struct {
 	SchemaVersion int           `json:"schemaVersion"`
 	Session       string        `json:"session"`
 	File          string        `json:"file"`
+	Module        *Node         `json:"module,omitempty"`
 	Declarations  []Declaration `json:"declarations"`
 	References    []Reference   `json:"references"`
 	Calls         []Call        `json:"calls"`

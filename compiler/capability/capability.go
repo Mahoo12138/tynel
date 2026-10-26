@@ -29,20 +29,27 @@ func Check(snapshot *source.Snapshot, facts *frontend.Facts) ([]*diagnostic.Diag
 		decl := &facts.Declarations[i]
 		c.declaration(decl)
 		if decl.Body != nil {
+			c.inFunction = decl.Kind == frontend.DeclFunction
 			c.node(decl.Body)
+			c.inFunction = false
 		}
 		if c.err != nil {
 			return nil, c.err
 		}
 	}
-	return c.findings, nil
+	if facts.Module != nil {
+		c.inFunction = false
+		c.node(facts.Module)
+	}
+	return c.findings, c.err
 }
 
 type checker struct {
-	snapshot *source.Snapshot
-	facts    *frontend.Facts
-	findings []*diagnostic.Diagnostic
-	err      error
+	snapshot   *source.Snapshot
+	facts      *frontend.Facts
+	findings   []*diagnostic.Diagnostic
+	err        error
+	inFunction bool
 }
 
 func (c *checker) declaration(d *frontend.Declaration) {
@@ -64,6 +71,9 @@ func (c *checker) node(n *frontend.Node) {
 	switch n.Kind {
 	case "Block":
 		c.children(n)
+	case "Const":
+		// 模块级常量本身没问题；它的初始化表达式挂在声明上，已经单独检查过。
+		return
 	case "ReturnStatement", "ExpressionStatement":
 		if len(n.Children) > 1 {
 			c.report(n.Start, "cap.unsupported-syntax", "%s 有 %d 个子节点，超出本阶段支持的形状", n.Kind, len(n.Children))
@@ -81,7 +91,7 @@ func (c *checker) node(n *frontend.Node) {
 		}
 		c.children(n)
 	case "PrefixUnaryExpression":
-		if n.Op != "MinusToken" && n.Op != "PlusToken" {
+		if n.Op != "-" && n.Op != "+" {
 			c.report(n.Start, "cap.bad-operator", "一元运算符 %q 不在本阶段支持的范围之内", n.Op)
 			return
 		}
@@ -107,7 +117,7 @@ func (c *checker) node(n *frontend.Node) {
 	case "StringLiteral", "NoSubstitutionTemplateLiteral", "TemplateExpression":
 		c.report(n.Start, "cap.unsupported-syntax", "字符串不在本阶段子集内")
 	case "VariableStatement", "VariableDeclaration", "VariableDeclarationList":
-		c.report(n.Start, "cap.unsupported-syntax", "函数内局部变量不在本阶段子集内")
+		c.report(n.Start, "cap.unsupported-syntax", "局部变量不在本阶段子集内，顶层只支持 const")
 	case "IfStatement", "WhileStatement", "DoStatement", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "TryStatement", "ThrowStatement":
 		c.report(n.Start, "cap.unsupported-syntax", "控制流 %s 不在本阶段子集内", n.Kind)
 	case "NewExpression":
@@ -133,8 +143,13 @@ func (c *checker) identifier(n *frontend.Node) {
 		c.report(n.Start, "cap.unknown-name", "名称 %q 不是本文件里的参数或常量", n.Name)
 		return
 	}
-	if decl.Kind == frontend.DeclFunction {
+	switch decl.Kind {
+	case frontend.DeclFunction:
 		c.report(n.Start, "cap.unsupported-syntax", "函数 %q 作为值使用不在本阶段子集内", n.Name)
+	case frontend.DeclConst:
+		if c.inFunction {
+			c.report(n.Start, "cap.module-const-in-function", "函数内引用模块常量 %q 需要全局变量，本阶段不支持", n.Name)
+		}
 	}
 }
 

@@ -5,6 +5,4 @@ function add(a: number, b: number): number {
 
 const answer: number = add(40, 2);
 
-function main(): void {
-  console.log(answer);
-}
+console.log(answer);

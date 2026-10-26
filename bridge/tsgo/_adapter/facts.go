@@ -8,6 +8,9 @@ package tyneladapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/microsoft/typescript-go/internal/ast"
@@ -44,6 +47,8 @@ type factNode struct {
 	Op       string     `json:"op,omitempty"`
 	Name     string     `json:"name,omitempty"`
 	Target   int        `json:"target,omitempty"`
+	Decl     int        `json:"decl,omitempty"`
+	Bits     string     `json:"bits,omitempty"`
 	Type     *factType  `json:"type,omitempty"`
 	Children []factNode `json:"children,omitempty"`
 }
@@ -74,6 +79,7 @@ type factsPayload struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	Session       string            `json:"session"`
 	File          string            `json:"file"`
+	Module        *factNode         `json:"module,omitempty"`
 	Declarations  []factDeclaration `json:"declarations"`
 	References    []factReference   `json:"references"`
 	Calls         []factCall        `json:"calls"`
@@ -106,10 +112,14 @@ func (s *Session) Facts() ([]byte, error) {
 		},
 	}
 	b.collect(s.file)
+	if b.err != nil {
+		return nil, b.err
+	}
 	return json.MarshalIndent(b.payload, "", "  ")
 }
 
 type factBuilder struct {
+	err           error
 	checker       *checker.Checker
 	ids           map[*ast.Symbol]int
 	declNameNodes map[*ast.Node]bool
@@ -141,6 +151,12 @@ func (b *factBuilder) lookup(sym *ast.Symbol) int {
 	return b.ids[sym]
 }
 
+// deferredNode 是模块级语句在 Children 里的占位。
+type deferredNode struct {
+	index int
+	node  *ast.Node
+}
+
 // pending 记录一个已经登记、但函数体还没处理的声明。
 type pending struct {
 	index  int
@@ -154,16 +170,49 @@ type pending struct {
 // 前面那次调用查不到后面的函数，callee 就成了 0。
 func (b *factBuilder) collect(file *ast.SourceFile) {
 	var queue []pending
+	var deferred []deferredNode
+	module := &factNode{Kind: "Block", Start: 0, Length: len(file.Text())}
 	for _, stmt := range file.Statements.Nodes {
 		switch {
 		case ast.IsFunctionDeclaration(stmt):
 			queue = append(queue, b.declareFunction(stmt))
 		case ast.IsVariableStatement(stmt):
-			for _, decl := range stmt.AsVariableStatement().DeclarationList.AsVariableDeclarationList().Declarations.Nodes {
-				queue = append(queue, b.declareVariable(decl))
+			list := stmt.AsVariableStatement().DeclarationList.AsVariableDeclarationList()
+			constDecl := list.Flags&ast.NodeFlagsConst != 0
+			for _, decl := range list.Declarations.Nodes {
+				item := b.declareVariable(decl)
+				queue = append(queue, item)
+				if constDecl {
+					// 顶层 const 在模块体里占一个位置，降低阶段按顺序求值。
+					module.Children = append(module.Children, factNode{
+						Kind:   "Const",
+						Start:  decl.Pos(),
+						Length: decl.End() - decl.Pos(),
+						Decl:   b.payload.Declarations[item.index].ID,
+					})
+				} else {
+					// let/var 不在子集内，保留原种类让能力检查拒绝。
+					module.Children = append(module.Children, factNode{
+						Kind:   "VariableStatement",
+						Start:  stmt.Pos(),
+						Length: stmt.End() - stmt.Pos(),
+					})
+				}
 			}
+		default:
+			// 模块级表达式要等所有声明登记完再转：它可能调用后面才声明的函数。
+			// 先占位，保持源码顺序。
+			index := len(module.Children)
+			module.Children = append(module.Children, factNode{})
+			deferred = append(deferred, deferredNode{index: index, node: stmt})
 		}
 	}
+	for _, item := range deferred {
+		if node := b.bodyNode(item.node); node != nil {
+			module.Children[item.index] = *node
+		}
+	}
+	b.payload.Module = module
 	for _, item := range queue {
 		if item.isFunc {
 			b.fillFunction(item)
@@ -380,10 +429,18 @@ func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
 			}
 		}
 		return out
+	case ast.IsNumericLiteral(node):
+		bits, err := numericBits(node.Text())
+		if err != nil {
+			b.err = fmt.Errorf("数字字面量 %q 无法解析：%w", node.Text(), err)
+			return out
+		}
+		out.Bits = fmt.Sprintf("0x%016x", bits)
 	case ast.IsVariableDeclaration(node):
 		// 局部变量不在本阶段的子集里，但它的名字不该被当成引用。
 		if name := node.Name(); name != nil {
 			b.declNameNodes[name] = true
+			out.Decl = b.lookup(b.checker.GetSymbolAtLocation(name))
 		}
 	}
 	node.ForEachChild(func(child *ast.Node) bool {
@@ -463,4 +520,34 @@ func operatorText(k ast.Kind) string {
 		return "^"
 	}
 	return kindName(k)
+}
+
+// numericBits 把 TypeScript 的数字字面量文本转成 binary64 位模式。
+//
+// 只在字面量上做这件事：值就写在源码里，按字面量的写法解析不会丢信息。
+// 类型字符串不这样处理——那需要理解类型语义，本阶段不做。
+func numericBits(text string) (uint64, error) {
+	s := strings.ReplaceAll(text, "_", "")
+	lower := strings.ToLower(s)
+	base := 10
+	switch {
+	case strings.HasPrefix(lower, "0x"):
+		base, s = 16, s[2:]
+	case strings.HasPrefix(lower, "0b"):
+		base, s = 2, s[2:]
+	case strings.HasPrefix(lower, "0o"):
+		base, s = 8, s[2:]
+	}
+	if base != 10 {
+		v, err := strconv.ParseUint(s, base, 64)
+		if err != nil {
+			return 0, err
+		}
+		return math.Float64bits(float64(v)), nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	return math.Float64bits(v), nil
 }

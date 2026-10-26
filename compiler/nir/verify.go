@@ -64,13 +64,13 @@ type checker struct {
 // function 检查一个函数体。返回值类型与参数表在这一层确定，表达式只做类型
 // 推导，不生成任何东西。
 func (c *checker) function(f *Function) error {
-	params := make(map[string]bool, len(f.Params))
+	sc := &scope{params: make(map[string]bool, len(f.Params)), locals: make(map[string]bool)}
 	for i := range f.Params {
 		p := &f.Params[i]
-		if params[p.Name] {
+		if sc.params[p.Name] {
 			return failAt("nir.duplicate-name", p.Pos, "函数 %q 的参数 %q 重复", f.Name, p.Name)
 		}
-		params[p.Name] = true
+		sc.params[p.Name] = true
 	}
 
 	for i := range f.Body {
@@ -86,7 +86,7 @@ func (c *checker) function(f *Function) error {
 			if s.Value == nil {
 				return failAt("nir.result-type", s.Pos, "函数 %q 返回 %s，return 必须带值", f.Name, f.Result)
 			}
-			got, err := c.exprType(s.Value, params)
+			got, err := c.exprType(s.Value, sc)
 			if err != nil {
 				return err
 			}
@@ -94,13 +94,25 @@ func (c *checker) function(f *Function) error {
 				return failAt("nir.result-type", s.Pos, "函数 %q 声明返回 %s，实际返回 %s", f.Name, f.Result, got)
 			}
 		case OpPrint:
-			got, err := c.exprType(s.Value, params)
+			got, err := c.exprType(s.Value, sc)
 			if err != nil {
 				return err
 			}
 			if got != TypeNumber {
 				return failAt("nir.print-type", s.Pos, "print 只接受 number，实际为 %s", got)
 			}
+		case OpLet:
+			got, err := c.exprType(s.Value, sc)
+			if err != nil {
+				return err
+			}
+			if got != TypeNumber {
+				return failAt("nir.local-type", s.Pos, "let %q 的值必须是 number，实际为 %s", s.Name, got)
+			}
+			if sc.params[s.Name] || sc.locals[s.Name] {
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 重复定义", f.Name, s.Name)
+			}
+			sc.locals[s.Name] = true
 		}
 	}
 
@@ -113,8 +125,15 @@ func (c *checker) function(f *Function) error {
 	return nil
 }
 
+// scope 是函数体内的可见名字。参数与局部值分开记：前者由调用方提供，后者
+// 必须由前面的 let 定义过。
+type scope struct {
+	params map[string]bool
+	locals map[string]bool
+}
+
 // exprType 推导表达式类型。返回 TypeNumber 或 TypeVoid（void 调用）。
-func (c *checker) exprType(e *Expr, params map[string]bool) (string, error) {
+func (c *checker) exprType(e *Expr, sc *scope) (string, error) {
 	if e == nil {
 		return "", badf("nir.missing", "表达式为空")
 	}
@@ -122,8 +141,13 @@ func (c *checker) exprType(e *Expr, params map[string]bool) (string, error) {
 	case OpNumber:
 		return TypeNumber, nil
 	case OpParam:
-		if !params[e.Name] {
+		if !sc.params[e.Name] {
 			return "", failAt("nir.unknown-param", e.Pos, "引用了不存在的参数 %q", e.Name)
+		}
+		return TypeNumber, nil
+	case OpLocal:
+		if !sc.locals[e.Name] {
+			return "", failAt("nir.unknown-local", e.Pos, "引用了尚未定义的局部值 %q", e.Name)
 		}
 		return TypeNumber, nil
 	case OpCall:
@@ -136,7 +160,7 @@ func (c *checker) exprType(e *Expr, params map[string]bool) (string, error) {
 				"调用 %q 需要 %d 个实参，实际 %d 个", e.Function, len(target.Params), len(e.Args))
 		}
 		for i := range e.Args {
-			got, err := c.exprType(&e.Args[i], params)
+			got, err := c.exprType(&e.Args[i], sc)
 			if err != nil {
 				return "", err
 			}
@@ -154,7 +178,7 @@ func (c *checker) exprType(e *Expr, params map[string]bool) (string, error) {
 			if side.expr == nil {
 				return "", failAt("nir.missing", e.Pos, "binary 缺少%s操作数", side.name)
 			}
-			got, err := c.exprType(side.expr, params)
+			got, err := c.exprType(side.expr, sc)
 			if err != nil {
 				return "", err
 			}

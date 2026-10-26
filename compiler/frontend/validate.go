@@ -1,6 +1,10 @@
 package frontend
 
-import "github.com/Mahoo12138/tynel/compiler/diagnostic"
+import (
+	"strings"
+
+	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+)
 
 // 语法骨架的预算。树来自前端，但深度和节点数由我们兜底：一段异常深的输入
 // 不应该让校验或降低阶段爆栈。
@@ -140,6 +144,16 @@ func (f *Facts) Validate() error {
 		}
 	}
 
+	if f.Module != nil {
+		if f.Module.Kind != "Block" {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-node", "模块体的种类是 %q，应为 Block", f.Module.Kind)
+		}
+		nodes := 0
+		if err := f.validateNode(f.Module, 1, &nodes); err != nil {
+			return err
+		}
+	}
+
 	for i := range f.Declarations {
 		d := &f.Declarations[i]
 		if d.Body == nil {
@@ -187,6 +201,25 @@ func (f *Facts) validateNode(n *Node, depth int, nodes *int) error {
 	if n.Target != 0 {
 		if _, ok := f.Declaration(n.Target); !ok {
 			return diagnostic.New(diagnostic.Internal, "facts.unknown-target", "%s 指向不存在的声明 ID %d", n.Kind, n.Target)
+		}
+	}
+	if n.Decl != 0 {
+		decl, ok := f.Declaration(n.Decl)
+		if !ok {
+			return diagnostic.New(diagnostic.Internal, "facts.unknown-target", "%s 引用了不存在的声明 ID %d", n.Kind, n.Decl)
+		}
+		if decl.Kind != DeclConst {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-decl-ref", "%s 引用的声明 %q 不是常量", n.Kind, decl.Name)
+		}
+	}
+	if n.Bits != "" {
+		if len(n.Bits) != 18 || !strings.HasPrefix(n.Bits, "0x") {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-bits", "%s 的位模式 %q 不是 0x 加 16 位十六进制", n.Kind, n.Bits)
+		}
+		for _, r := range n.Bits[2:] {
+			if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+				return diagnostic.New(diagnostic.Internal, "facts.bad-bits", "%s 的位模式 %q 含非法字符", n.Kind, n.Bits)
+			}
 		}
 	}
 	for i := range n.Children {

@@ -8,6 +8,7 @@
 //	consumer -quiet <file.ts>      只输出摘要
 //	consumer -facts <file.ts>      输出前端事实 JSON（开发接口）
 //	consumer -capability <file.ts> 先查源码，再查原生能力；有越界写法时退出 3
+//	consumer -nir <file.ts>       输出降低后的 NIR（开发接口）
 package main
 
 import (
@@ -20,6 +21,8 @@ import (
 	"github.com/Mahoo12138/tynel/compiler/capability"
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
 	"github.com/Mahoo12138/tynel/compiler/frontend"
+	"github.com/Mahoo12138/tynel/compiler/lower"
+	"github.com/Mahoo12138/tynel/compiler/nir"
 	"github.com/Mahoo12138/tynel/compiler/source"
 	"github.com/microsoft/typescript-go/tyneladapter"
 )
@@ -43,6 +46,7 @@ func main() {
 	quiet := flag.Bool("quiet", false, "只输出摘要")
 	facts := flag.Bool("facts", false, "输出前端事实而不是诊断")
 	capabilityCheck := flag.Bool("capability", false, "检查程序是否落在原生子集内")
+	nirOut := flag.Bool("nir", false, "输出降低后的 NIR")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "用法：consumer [-quiet] <file.ts>")
 	}
@@ -81,6 +85,11 @@ func main() {
 		return
 	}
 
+	if *nirOut {
+		runLower(snapshot)
+		return
+	}
+
 	diagnostics, err := check(snapshot)
 	if err != nil {
 		report(err)
@@ -115,6 +124,32 @@ func main() {
 // 源码有错时能力结论没有意义——类型都没定下来，「这个类型有没有原生表示」
 // 无从谈起。所以顺序固定：源码错误退出 1，能力越界退出 3，全部通过退出 0。
 func runCapability(snapshot *source.Snapshot) {
+	gate(snapshot)
+	emitFindings(nil)
+}
+
+// runLower 走完整的前半程：源码检查、能力检查、降低，然后输出 NIR。
+//
+// 降低在会话关闭之后进行——gate 里取的 facts 已经是普通数据，不再依赖
+// 任何前端句柄。
+func runLower(snapshot *source.Snapshot) {
+	facts := gate(snapshot)
+	module, err := lower.Lower(snapshot, facts)
+	if err != nil {
+		report(err)
+	}
+	data, err := nir.EncodeBytes(module)
+	if err != nil {
+		report(err)
+	}
+	if _, err := os.Stdout.Write(data); err != nil {
+		fmt.Fprintf(os.Stderr, "写出 NIR 失败：%v\n", err)
+		os.Exit(diagnostic.ExitInternal)
+	}
+}
+
+// gate 是进入后端之前的关卡：源码错误退出 1，能力越界退出 3，通过则返回事实。
+func gate(snapshot *source.Snapshot) *frontend.Facts {
 	diagnostics, err := check(snapshot)
 	if err != nil {
 		report(err)
@@ -125,7 +160,6 @@ func runCapability(snapshot *source.Snapshot) {
 			os.Exit(diagnostic.ExitSource)
 		}
 	}
-
 	facts, err := factsOf(snapshot)
 	if err != nil {
 		report(err)
@@ -134,10 +168,11 @@ func runCapability(snapshot *source.Snapshot) {
 	if err != nil {
 		report(err)
 	}
-	emitFindings(findings)
 	if len(findings) > 0 {
+		emitFindings(findings)
 		os.Exit(diagnostic.ExitCapability)
 	}
+	return facts
 }
 
 // factsOf 取事实并解码校验，供 -facts 与 -capability 共用。

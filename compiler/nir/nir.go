@@ -35,14 +35,20 @@ const (
 const (
 	OpNumber = "number"
 	OpParam  = "param"
+	OpLocal  = "local"
 	OpCall   = "call"
 	OpBinary = "binary"
 )
 
 // 语句操作。
+//
+// let 定义一个局部值，供后续语句按名字读取。它不是语言层面的变量：前端把
+// 模块级 const 和中间结果落到这里，避免在表达式里重复求值。同名重复定义和
+// 先读后定义都由验证器拒绝。
 const (
 	OpReturn = "return"
 	OpPrint  = "print"
+	OpLet    = "let"
 )
 
 // BinaryOperators 是首版允许的二元运算符，顺序用于报错提示。
@@ -81,6 +87,7 @@ type Pos struct {
 // Stmt 是一条语句。Value 为 nil 只对无返回值的 return 合法。
 type Stmt struct {
 	Op    string `json:"op"`
+	Name  string `json:"name,omitempty"` // 仅 let 使用
 	Value *Expr  `json:"value,omitempty"`
 	Pos   *Pos   `json:"pos,omitempty"`
 }

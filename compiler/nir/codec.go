@@ -197,14 +197,25 @@ func (m *Module) check(limits Limits) error {
 			spath := fmt.Sprintf("%s.body[%d]", path, j)
 			nodes++
 			switch s.Op {
-			case OpReturn, OpPrint:
+			case OpReturn, OpPrint, OpLet:
 			case "":
 				return badf("nir.missing", "%s 缺少 op", spath)
 			default:
-				return badf("nir.bad-op", "%s.op 为 %q，只接受 return 或 print", spath, s.Op)
+				return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print 或 let", spath, s.Op)
+			}
+			if s.Op != OpLet && s.Name != "" {
+				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 name", spath, s.Op)
 			}
 			if s.Op == OpPrint && s.Value == nil {
 				return badf("nir.missing", "%s 的 print 缺少 value", spath)
+			}
+			if s.Op == OpLet {
+				if s.Name == "" {
+					return badf("nir.missing", "%s 的 let 缺少 name", spath)
+				}
+				if s.Value == nil {
+					return badf("nir.missing", "%s 的 let 缺少 value", spath)
+				}
 			}
 			if s.Value != nil {
 				if err := checkExpr(s.Value, spath+".value", 1, &nodes, limits); err != nil {
@@ -254,7 +265,7 @@ func checkExpr(root *Expr, rootPath string, depth int, nodes *int, limits Limits
 			if _, err := parseBits(e.Bits); err != nil {
 				return badf("nir.bad-bits", "%s 的 bits 不合法：%v", it.path, err)
 			}
-		case OpParam:
+		case OpParam, OpLocal:
 			if err := onlyFields(e, it.path, "name"); err != nil {
 				return err
 			}

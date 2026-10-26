@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实和 02.04 的能力检查；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查和 02.05 的降低；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -122,9 +122,13 @@ go run . -facts ../testdata/facts.ts
 
 # 先查源码，再查原生能力；源码有错退出 1，能力越界退出 3。
 go run . -capability ../testdata/capability/ok.ts
+
+# 降低成 NIR，再交给 build-ir 编成原生程序。
+go run . -nir ../testdata/add.ts > /tmp/add.nir.json
+cd ../.. && ./bin/tynel build-ir /tmp/add.nir.json -o /tmp/add && /tmp/add
 ```
 
-宿主是独立模块，通过两条 `replace` 指向 `.work/frontend/typescript-go` 与仓库根目录，只导入 `tyneladapter` 和 Tynel 自己的 `compiler/source`，不导入任何 `internal` 包。诊断里的 `start` 是 UTF-8 字节偏移，`line`/`column` 是按快照换算的行列；换算规则和错误码见[源码快照与位置](reference/source.md)，适配接口与会话规则见[前端适配](reference/frontend.md)，声明 ID、类型摘要与校验规则见[声明身份与事实](reference/facts.md)，支持的写法与错误码见[原生能力白名单](reference/capability.md)。
+宿主是独立模块，通过两条 `replace` 指向 `.work/frontend/typescript-go` 与仓库根目录，只导入 `tyneladapter` 和 Tynel 自己的 `compiler/source`，不导入任何 `internal` 包。诊断里的 `start` 是 UTF-8 字节偏移，`line`/`column` 是按快照换算的行列；换算规则和错误码见[源码快照与位置](reference/source.md)，适配接口与会话规则见[前端适配](reference/frontend.md)，声明 ID、类型摘要与校验规则见[声明身份与事实](reference/facts.md)，支持的写法与错误码见[原生能力白名单](reference/capability.md)，源码到 NIR 的对应关系见[从源码到 NIR](reference/lowering.md)。
 
 `bridge/tsgo/check` 首次运行会下载前端依赖到 `.work/frontend/gomodcache`，之后可以离线构建；默认使用 `https://goproxy.cn`，可用 `TYNEL_GOPROXY` 覆盖。
 

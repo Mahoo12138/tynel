@@ -46,8 +46,11 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | --- | --- | --- |
 | `return` | `value` 可选 | 返回一个表达式；`void` 函数可以不带值 |
 | `print` | `value` 必填 | 输出一个表达式的结果 |
+| `let` | `name`、`value` 必填 | 定义一个局部值，供后续语句按名字读取 |
 
-首版没有局部变量、分支和循环的语句形式，它们随 03、04 节点加入，不在 01.03 预置。
+`let` 不是语言层面的变量，它解决的是求值次数：前端把模块级 `const` 和需要复用的中间结果落成局部值，避免在表达式里重复求值——`const x = f(); g(x, x)` 只应该调用一次 `f`。
+
+局部值的作用域是当前函数，必须先用 `let` 定义、后按名字读取；同名重复定义和先读后定义都由验证器拒绝（`nir.duplicate-name`、`nir.unknown-local`）。分支和循环的语句形式随 03、04 节点加入。
 
 ## 表达式
 
@@ -55,6 +58,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | --- | --- | --- |
 | `number` | `bits` | binary64 字面量，用位模式表示 |
 | `param` | `name` | 引用当前函数的参数 |
+| `local` | `name` | 引用前面 `let` 定义的局部值 |
 | `call` | `function`，`args` 可选 | 直接调用具名函数 |
 | `binary` | `operator`、`left`、`right` | 二元运算，运算符限 `+`、`-`、`*`、`/` |
 
@@ -129,6 +133,8 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.arg-type` | 语义 | 实参类型与形参不符 |
 | `nir.result-type` | 语义 | 返回值与函数声明不符，或 `void` 函数带返回值 |
 | `nir.print-type` | 语义 | `print` 的参数不是 `number` |
+| `nir.local-type` | 语义 | `let` 的值不是 `number` |
+| `nir.unknown-local` | 语义 | 引用了尚未定义的局部值 |
 | `nir.operand-type` | 语义 | 运算符的操作数不是 `number` |
 | `nir.missing-return` | 语义 | 返回 `number` 的函数没有以 `return` 结束 |
 | `nir.io` | 环境 | 打开、写入或改名失败 |

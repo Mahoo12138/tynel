@@ -142,6 +142,7 @@ func signature(f function, pos src.XPos) (*types.Type, error) {
 
 func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsHelper *ir.Name, pos src.XPos) error {
 	params := make(map[string]*ir.Name, len(f.Params))
+	locals := make(map[string]*ir.Name)
 	for i, p := range f.Params {
 		if i >= len(fn.Dcl) {
 			return fmt.Errorf("函数 %q 的参数数量与声明不符", f.Name)
@@ -157,13 +158,29 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsH
 				body = append(body, ir.NewReturnStmt(pos, nil))
 				continue
 			}
-			v, err := buildExpr(s.Value, params, funcs, bitsHelper, pos)
+			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
 			if err != nil {
 				return err
 			}
 			body = append(body, ir.NewReturnStmt(pos, []ir.Node{v}))
+		case "let":
+			if s.Value == nil {
+				return fmt.Errorf("let %q 缺少值", s.Name)
+			}
+			if _, exists := locals[s.Name]; exists {
+				return fmt.Errorf("局部值 %q 重复定义", s.Name)
+			}
+			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
+			if err != nil {
+				return err
+			}
+			// 局部值就是一个 Go 自动变量：声明在函数里，赋值一次，之后按名字读。
+			sym := &types.Sym{Name: s.Name, Pkg: types.LocalPkg}
+			local := fn.NewLocal(pos, sym, types.Types[types.TFLOAT64])
+			locals[s.Name] = local
+			body = append(body, ir.NewAssignStmt(pos, local, v))
 		case "print":
-			v, err := buildExpr(s.Value, params, funcs, bitsHelper, pos)
+			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
 			if err != nil {
 				return err
 			}
@@ -186,7 +203,7 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsH
 	return nil
 }
 
-func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, bitsHelper *ir.Name, pos src.XPos) (ir.Node, error) {
+func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir.Func, bitsHelper *ir.Name, pos src.XPos) (ir.Node, error) {
 	if e == nil {
 		return nil, fmt.Errorf("表达式为空")
 	}
@@ -210,6 +227,12 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, b
 			return nil, fmt.Errorf("引用不存在的参数 %q", e.Name)
 		}
 		return n, nil
+	case "local":
+		n, ok := locals[e.Name]
+		if !ok {
+			return nil, fmt.Errorf("引用未定义的局部值 %q", e.Name)
+		}
+		return n, nil
 	case "call":
 		callee, ok := funcs[e.Function]
 		if !ok {
@@ -217,7 +240,7 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, b
 		}
 		args := make([]ir.Node, 0, len(e.Args))
 		for i := range e.Args {
-			a, err := buildExpr(&e.Args[i], params, funcs, bitsHelper, pos)
+			a, err := buildExpr(&e.Args[i], params, locals, funcs, bitsHelper, pos)
 			if err != nil {
 				return nil, err
 			}
@@ -229,11 +252,11 @@ func buildExpr(e *expr, params map[string]*ir.Name, funcs map[string]*ir.Func, b
 		if !ok {
 			return nil, fmt.Errorf("不支持的运算符 %q", e.Operator)
 		}
-		x, err := buildExpr(e.Left, params, funcs, bitsHelper, pos)
+		x, err := buildExpr(e.Left, params, locals, funcs, bitsHelper, pos)
 		if err != nil {
 			return nil, err
 		}
-		y, err := buildExpr(e.Right, params, funcs, bitsHelper, pos)
+		y, err := buildExpr(e.Right, params, locals, funcs, bitsHelper, pos)
 		if err != nil {
 			return nil, err
 		}
@@ -282,6 +305,7 @@ type param struct {
 
 type stmt struct {
 	Op    string `json:"op"`
+	Name  string `json:"name,omitempty"`
 	Value *expr  `json:"value"`
 }
 

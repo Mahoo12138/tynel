@@ -5,7 +5,7 @@
 #
 # 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
-# 缺失被拒、声明事实与原生能力白名单。
+# 缺失被拒、声明事实、原生能力白名单，以及从源码降低到可运行的原生程序。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -233,6 +233,57 @@ if [[ $code -eq 1 ]] && print -- "$out" | grep -q '"code": 2322'; then
   pass "源码错误先于能力检查（退出 1）"
 else
   fail "源码错误应退出 1，实际退出 $code：$out"
+fi
+
+# 13. 降低到 NIR 并运行：源码 → NIR → 原生程序，与手写 NIR 行为一致
+TYNEL="$ROOT/bin/tynel"
+if [[ ! -x "$TYNEL" ]]; then
+  (cd "$ROOT" && ./tools/build >/dev/null 2>&1) || true
+fi
+if [[ ! -x "$ROOT/.work/bridge/compile" ]]; then
+  (cd "$ROOT" && ./bridge/go/build >/dev/null 2>&1) || true
+fi
+
+if [[ ! -x "$TYNEL" ]]; then
+  fail "找不到 bin/tynel，无法验收降低结果"
+else
+  tmp=$(mktemp -d)
+  lower_case() {
+    local file=$1 want=$2 name=${1:t:r}
+    local nirfile="$tmp/$name.nir.json" exe="$tmp/$name"
+    if ! "$BIN" -nir "$file" >"$nirfile" 2>"$tmp/err"; then
+      fail "$name 无法降低：$(<$tmp/err)"
+      return
+    fi
+    if ! "$TYNEL" build-ir "$nirfile" -o "$exe" >/dev/null 2>"$tmp/err"; then
+      fail "$name 的 NIR 无法编译：$(<$tmp/err)"
+      return
+    fi
+    local got=$("$exe")
+    if [[ "$got" == "$want" ]]; then
+      pass "$name 运行输出符合预期"
+    else
+      fail "$name 输出为 $(printf %q "$got")，期望 $(printf %q "$want")"
+    fi
+  }
+  lower_case "$ROOT/bridge/tsgo/testdata/add.ts" "42"
+  lower_case "$ROOT/bridge/tsgo/testdata/lower/order.ts" $'1\n2\n3'
+  lower_case "$ROOT/bridge/tsgo/testdata/lower/negzero.ts" "-0"
+  lower_case "$ROOT/bridge/tsgo/testdata/lower/forward.ts" "42"
+  lower_case "$ROOT/bridge/tsgo/testdata/lower/same-name.ts" "8"
+
+  if "$TYNEL" build-ir "$ROOT/examples/ir/add.nir.json" -o "$tmp/hand" >/dev/null 2>&1; then
+    hand=$("$tmp/hand")
+    gen=$("$tmp/add")
+    if [[ "$hand" == "$gen" && "$hand" == "42" ]]; then
+      pass "手写 NIR 与源码生成的 NIR 输出一致"
+    else
+      fail "手写 NIR 输出 $hand，源码生成输出 $gen"
+    fi
+  else
+    fail "手写 NIR 无法编译"
+  fi
+  rm -rf "$tmp"
 fi
 
 print -- ""

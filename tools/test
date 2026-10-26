@@ -10,7 +10,12 @@ if [[ -z "$GO" ]]; then
 fi
 
 if [[ ! -x "$ROOT/.work/bridge/compile" ]]; then
-  print -u2 -- "找不到修改版编译器；先运行 ./bridge/go/build（tests/native 需要它）"
+  print -u2 -- "找不到修改版编译器；先运行 ./bridge/go/build（tests/native 与 tests/source 需要它）"
+  exit 1
+fi
+
+if [[ ! -d "$ROOT/.work/frontend/typescript-go" ]]; then
+  print -u2 -- "找不到前端源码；先运行 ./tools/toolchain/prep --frontend-only（tests/source 需要它）"
   exit 1
 fi
 

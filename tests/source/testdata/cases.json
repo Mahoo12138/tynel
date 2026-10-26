@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"name": "add", "file": "add.ts", "kind": "program", "stdout": "42\n", "note": "加法"},
+    {"name": "order", "file": "order.ts", "kind": "program", "stdout": "1\n2\n3\n", "note": "实参从左到右求值"},
+    {"name": "nested", "file": "nested.ts", "kind": "program", "stdout": "11\n", "note": "嵌套调用与四则运算"},
+    {"name": "forward", "file": "forward.ts", "kind": "program", "stdout": "42\n", "note": "声明提升"},
+    {"name": "void", "file": "void.ts", "kind": "program", "stdout": "7\n8\n", "note": "void 函数每次调用输出一行"},
+    {"name": "discard", "file": "discard.ts", "kind": "program", "stdout": "42\n", "note": "表达式语句不打印"},
+    {"name": "big", "file": "big.ts", "kind": "program", "stdout": "1e+21\n", "note": "大数用指数写法"},
+    {"name": "specials", "file": "specials.ts", "kind": "program", "stdout": "0.30000000000000004\n-0\n+Inf\n-Inf\nNaN\n", "note": "负零、无穷与 NaN"},
+    {"name": "type-error", "file": "errors/type.ts", "kind": "source-error", "code": "2322", "note": "字符串赋给 number"},
+    {"name": "modulo", "file": "errors/modulo.ts", "kind": "capability", "code": "cap.bad-operator", "note": "未实现的运算"},
+    {"name": "any", "file": "errors/any.ts", "kind": "capability", "code": "cap.any", "note": "any 没有原生表示"},
+    {"name": "void-value", "file": "errors/void-value.ts", "kind": "capability", "code": "cap.void-value", "note": "void 当作值"},
+    {"name": "control-flow", "file": "errors/control.ts", "kind": "capability", "code": "cap.unsupported-syntax", "note": "控制流"},
+    {"name": "missing-file", "file": "errors/missing.ts", "kind": "environment", "note": "文件不存在"}
+  ]
+}

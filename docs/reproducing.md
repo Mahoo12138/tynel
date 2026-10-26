@@ -82,9 +82,14 @@ cd tynel
 # 运行全部 Go 测试；用 -count=1 禁用缓存，只统计真正跑过用例的包。
 # 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
+
+# 只跑源码到原生的回归集合：14 个用例，其中 8 个程序会真的编译并运行。
+./.work/toolchain/go1.27.3-sdk-darwin-arm64/bin/go test -count=1 -v ./tests/source
 ```
 
 `bin/tynel` 不进入版本库。命令、退出状态和职责划分见[命令行参考](reference/cli.md)。
+
+源码回归的用例清单在 `tests/source/testdata/cases.json`，参考输出锁在 `tests/source/reference.json`（Node v22.22.2，`--experimental-strip-types`）。有 Node 的机器会把参考输出与 Node 的实际输出对一遍；没有就跳过对照并说明原因，黄金输出比对照常进行。覆盖范围与环境见[源码回归验收](validation/02-08-source.md)。
 
 ## bridge：从 NIR 到原生程序
 
@@ -216,4 +221,4 @@ go env GOROOT
 
 ## 尚未覆盖
 
-源码快照与错误位置在 02.02 进行，把前端接进 `tynel build` 在 02.07 进行；Windows 目标保留在 `deferredTargets` 中，没有可执行的准备命令。本页不提供这些步骤的命令，避免把计划写成已经可用。
+控制流、字符串、对象、数组和模块导入都还没有实现，`check` 会按能力限制拒绝；阶段笔记与完成标签在 02.09 收尾。Windows 目标保留在 `deferredTargets` 中，没有可执行的准备命令。本页不提供这些步骤的命令，避免把计划写成已经可用。

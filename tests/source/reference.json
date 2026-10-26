@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "runtime": "node",
+  "version": "v22.22.2",
+  "major": 22,
+  "command": "node --experimental-strip-types <file>",
+  "capturedAt": "2026-10-26",
+  "note": "shared 表示 Tynel 与 Node 的输出应逐字节相同；spelling 表示只有特殊值拼写不同，归一后必须相同。",
+  "cases": {
+    "add": {"comparison": "shared"},
+    "order": {"comparison": "shared"},
+    "nested": {"comparison": "shared"},
+    "forward": {"comparison": "shared"},
+    "void": {"comparison": "shared"},
+    "discard": {"comparison": "shared"},
+    "big": {"comparison": "shared"},
+    "specials": {
+      "comparison": "spelling",
+      "note": "无穷在 Tynel 写作 +Inf / -Inf，Node 写作 Infinity / -Infinity；归一拼写后应完全一致"
+    }
+  }
+}

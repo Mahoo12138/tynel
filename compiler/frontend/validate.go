@@ -2,6 +2,13 @@ package frontend
 
 import "github.com/Mahoo12138/tynel/compiler/diagnostic"
 
+// 语法骨架的预算。树来自前端，但深度和节点数由我们兜底：一段异常深的输入
+// 不应该让校验或降低阶段爆栈。
+const (
+	maxBodyDepth = 100
+	maxBodyNodes = 20_000
+)
+
 // Validate 检查事实的内部一致性。
 //
 // 它回答的是「这份数据自己讲得通吗」：ID 有没有重复、引用指向的声明在不在、
@@ -133,12 +140,58 @@ func (f *Facts) Validate() error {
 		}
 	}
 
+	for i := range f.Declarations {
+		d := &f.Declarations[i]
+		if d.Body == nil {
+			continue
+		}
+		if d.Kind == DeclParameter {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-body", "参数 %q 不应带语法骨架", d.Name)
+		}
+		nodes := 0
+		if err := f.validateNode(d.Body, 1, &nodes); err != nil {
+			return err
+		}
+	}
+
 	for _, expr := range f.Expressions {
 		if expr.Kind == "" || expr.Length <= 0 || expr.Start < 0 {
 			return diagnostic.New(diagnostic.Internal, "facts.bad-position", "表达式位置 %d+%d 或类别 %q 不合法", expr.Start, expr.Length, expr.Kind)
 		}
 		if !expr.Type.Kind.valid() {
 			return diagnostic.New(diagnostic.Internal, "facts.bad-type", "表达式类型 %q 不认识", expr.Type.Kind)
+		}
+	}
+	return nil
+}
+
+// validateNode 检查语法骨架的形状：种类非空、位置合法、引用的声明存在，
+// 并且深度与节点数在预算内。
+func (f *Facts) validateNode(n *Node, depth int, nodes *int) error {
+	if depth > maxBodyDepth {
+		return diagnostic.New(diagnostic.Internal, "facts.body-too-deep", "语法骨架超过 %d 层", maxBodyDepth)
+	}
+	*nodes++
+	if *nodes > maxBodyNodes {
+		return diagnostic.New(diagnostic.Internal, "facts.body-too-large", "语法骨架超过 %d 个节点", maxBodyNodes)
+	}
+	if n.Kind == "" {
+		return diagnostic.New(diagnostic.Internal, "facts.bad-node", "语法骨架的节点缺少种类")
+	}
+	if n.Start < 0 || n.Length <= 0 {
+		return diagnostic.New(diagnostic.Internal, "facts.bad-position", "%s 的位置 %d+%d 不合法", n.Kind, n.Start, n.Length)
+	}
+	if n.Type != nil && !n.Type.Kind.valid() {
+		return diagnostic.New(diagnostic.Internal, "facts.bad-type", "%s 的类型 %q 不认识", n.Kind, n.Type.Kind)
+	}
+	if n.Target != 0 {
+		if _, ok := f.Declaration(n.Target); !ok {
+			return diagnostic.New(diagnostic.Internal, "facts.unknown-target", "%s 指向不存在的声明 ID %d", n.Kind, n.Target)
+		}
+	}
+	for i := range n.Children {
+		if err := f.validateNode(&n.Children[i], depth+1, nodes); err != nil {
+			return err
 		}
 	}
 	return nil

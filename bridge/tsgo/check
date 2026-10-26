@@ -5,7 +5,7 @@
 #
 # 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
-# 缺失被拒，以及声明事实。
+# 缺失被拒、声明事实与原生能力白名单。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -205,6 +205,35 @@ else
   fail "事实输出不符合预期（退出 $code）"
 fi
 rm -f "$facts"
+
+# 12. 能力检查：支持子集通过，越界写法按退出 3 拒绝，源码错误优先
+CAP="$ROOT/bridge/tsgo/testdata/capability"
+out=$("$BIN" -capability "$CAP/ok.ts" 2>&1); code=$?
+if [[ $code -eq 0 && "$out" == "[]" ]]; then
+  pass "支持子集通过能力检查（退出 0）"
+else
+  fail "支持子集应通过，实际退出 $code：$out"
+fi
+
+for pair in "any.ts:cap.any" "assert.ts:cap.type-escape" "object.ts:cap.unsupported-syntax" \
+            "eval.ts:cap.forbidden-global" "dynamic-function.ts:cap.unsupported-syntax" \
+            "library.ts:cap.unknown-callee" "uncalled.ts:cap.unsupported-syntax"; do
+  file=${pair%%:*}
+  want=${pair##*:}
+  out=$("$BIN" -capability "$CAP/$file" 2>&1); code=$?
+  if [[ $code -eq 3 ]] && print -- "$out" | grep -q "\"$want\""; then
+    pass "$file 按退出 3 拒绝（$want）"
+  else
+    fail "$file 应报 $want 并退出 3，实际退出 $code：$out"
+  fi
+done
+
+out=$("$BIN" -capability "$ROOT/bridge/tsgo/testdata/bad.ts" 2>&1); code=$?
+if [[ $code -eq 1 ]] && print -- "$out" | grep -q '"code": 2322'; then
+  pass "源码错误先于能力检查（退出 1）"
+else
+  fail "源码错误应退出 1，实际退出 $code：$out"
+fi
 
 print -- ""
 if [[ $failures -eq 0 ]]; then

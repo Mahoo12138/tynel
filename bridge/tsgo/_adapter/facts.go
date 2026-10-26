@@ -8,6 +8,7 @@ package tyneladapter
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/checker"
@@ -28,6 +29,23 @@ type factDeclaration struct {
 	Type       *factType `json:"type,omitempty"`
 	Result     *factType `json:"result,omitempty"`
 	Parameters []int     `json:"parameters,omitempty"`
+	Body       *factNode `json:"body,omitempty"`
+}
+
+// factNode 是函数体或初始化表达式的语法骨架。
+//
+// Kind 用上游的语法种类名（ReturnStatement、BinaryExpression…），调用方按
+// 名字判断支持与否。只保留语句、表达式和变量声明这三类结构，类型节点、
+// 修饰符、名字令牌都不进树——它们不参与能力判断。
+type factNode struct {
+	Kind     string     `json:"kind"`
+	Start    int        `json:"start"`
+	Length   int        `json:"length"`
+	Op       string     `json:"op,omitempty"`
+	Name     string     `json:"name,omitempty"`
+	Target   int        `json:"target,omitempty"`
+	Type     *factType  `json:"type,omitempty"`
+	Children []factNode `json:"children,omitempty"`
 }
 
 type factReference struct {
@@ -99,9 +117,9 @@ type factBuilder struct {
 	payload       factsPayload
 }
 
-// idFor 给符号分配声明 ID。同一个符号在多次引用中拿到同一个 ID，不同声明
-// 拿到不同 ID——两个函数里各有一个 a，它们是两个符号，也就是两个 ID。
-func (b *factBuilder) idFor(sym *ast.Symbol) int {
+// declare 给本文件里的声明分配 ID。同一个符号在多次引用中拿到同一个 ID，
+// 不同声明拿到不同 ID——两个函数里各有一个 a，它们是两个符号，也就是两个 ID。
+func (b *factBuilder) declare(sym *ast.Symbol) int {
 	if sym == nil {
 		return 0
 	}
@@ -113,24 +131,54 @@ func (b *factBuilder) idFor(sym *ast.Symbol) int {
 	return b.nextID
 }
 
+// lookup 只查已经声明过的符号。库里的 Math、console 也能解析到符号，但它们
+// 不是本文件里的声明，不能因此拿到一个没有对应声明的 ID——那会让事实校验
+// 报「引用指向不存在的声明」。
+func (b *factBuilder) lookup(sym *ast.Symbol) int {
+	if sym == nil {
+		return 0
+	}
+	return b.ids[sym]
+}
+
+// pending 记录一个已经登记、但函数体还没处理的声明。
+type pending struct {
+	index  int
+	node   *ast.Node
+	isFunc bool
+}
+
+// collect 分两趟：先登记所有顶层声明，再遍历函数体与初始化表达式。
+//
+// 顺序不能反过来。函数声明会提升，调用可以出现在声明之前；如果边登记边遍历，
+// 前面那次调用查不到后面的函数，callee 就成了 0。
 func (b *factBuilder) collect(file *ast.SourceFile) {
+	var queue []pending
 	for _, stmt := range file.Statements.Nodes {
 		switch {
 		case ast.IsFunctionDeclaration(stmt):
-			b.function(stmt)
+			queue = append(queue, b.declareFunction(stmt))
 		case ast.IsVariableStatement(stmt):
 			for _, decl := range stmt.AsVariableStatement().DeclarationList.AsVariableDeclarationList().Declarations.Nodes {
-				b.variable(decl)
+				queue = append(queue, b.declareVariable(decl))
 			}
+		}
+	}
+	for _, item := range queue {
+		if item.isFunc {
+			b.fillFunction(item)
+		} else {
+			b.fillVariable(item)
 		}
 	}
 }
 
-func (b *factBuilder) function(node *ast.Node) {
+// declareFunction 只登记签名与参数，不碰函数体。
+func (b *factBuilder) declareFunction(node *ast.Node) pending {
 	fn := node.AsFunctionDeclaration()
 	name := fn.Name()
 	decl := factDeclaration{
-		ID:     b.idFor(b.checker.GetSymbolAtLocation(name)),
+		ID:     b.declare(b.checker.GetSymbolAtLocation(name)),
 		Kind:   "function",
 		Name:   name.Text(),
 		Start:  node.Pos(),
@@ -145,14 +193,12 @@ func (b *factBuilder) function(node *ast.Node) {
 		decl.Result = &result
 	}
 
-	// 用 *Node 上的访问器，而不是 FunctionDeclaration 结构体的同名字段：
-	// 结构体字段是 *ParameterList，Node 方法才返回参数节点列表。
 	// 先把参数的 ID 算出来，再按「函数在前、参数在后」的顺序写入，读起来的
 	// 顺序与源码一致。
 	var params []factDeclaration
 	for _, param := range node.Parameters() {
 		paramName := param.Name()
-		id := b.idFor(b.checker.GetSymbolAtLocation(paramName))
+		id := b.declare(b.checker.GetSymbolAtLocation(paramName))
 		decl.Parameters = append(decl.Parameters, id)
 		typ := b.typeOf(b.checker.GetTypeAtLocation(paramName))
 		params = append(params, factDeclaration{
@@ -168,17 +214,24 @@ func (b *factBuilder) function(node *ast.Node) {
 
 	b.payload.Declarations = append(b.payload.Declarations, decl)
 	b.payload.Declarations = append(b.payload.Declarations, params...)
-	if body := node.Body(); body != nil {
+	return pending{index: len(b.payload.Declarations) - len(params) - 1, node: node, isFunc: true}
+}
+
+// fillFunction 在全部声明登记完之后再处理函数体。
+func (b *factBuilder) fillFunction(item pending) {
+	body := item.node.Body()
+	b.payload.Declarations[item.index].Body = b.bodyNode(body)
+	if body != nil {
 		b.walk(body)
 	}
 }
 
-func (b *factBuilder) variable(node *ast.Node) {
+func (b *factBuilder) declareVariable(node *ast.Node) pending {
 	decl := node.AsVariableDeclaration()
 	name := decl.Name()
 	typ := b.typeOf(b.checker.GetTypeAtLocation(name))
 	b.payload.Declarations = append(b.payload.Declarations, factDeclaration{
-		ID:     b.idFor(b.checker.GetSymbolAtLocation(name)),
+		ID:     b.declare(b.checker.GetSymbolAtLocation(name)),
 		Kind:   "const",
 		Name:   name.Text(),
 		Start:  node.Pos(),
@@ -186,9 +239,16 @@ func (b *factBuilder) variable(node *ast.Node) {
 		Type:   &typ,
 	})
 	b.declNameNodes[name] = true
-	if decl.Initializer != nil {
-		b.walk(decl.Initializer)
+	return pending{index: len(b.payload.Declarations) - 1, node: node, isFunc: false}
+}
+
+func (b *factBuilder) fillVariable(item pending) {
+	decl := item.node.AsVariableDeclaration()
+	if decl.Initializer == nil {
+		return
 	}
+	b.payload.Declarations[item.index].Body = b.bodyNode(decl.Initializer)
+	b.walk(decl.Initializer)
 }
 
 // walk 只走函数体和初始化表达式，不走类型注解：类型注解里的 number、void
@@ -221,7 +281,7 @@ func (b *factBuilder) reference(node *ast.Node) {
 		Name:   node.Text(),
 		Start:  node.Pos(),
 		Length: node.End() - node.Pos(),
-		Target: b.idFor(b.checker.GetSymbolAtLocation(node)),
+		Target: b.lookup(b.checker.GetSymbolAtLocation(node)),
 	})
 }
 
@@ -229,7 +289,7 @@ func (b *factBuilder) call(node *ast.Node) {
 	call := node.AsCallExpression()
 	callee := 0
 	if ast.IsIdentifier(call.Expression) {
-		callee = b.idFor(b.checker.GetSymbolAtLocation(call.Expression))
+		callee = b.lookup(b.checker.GetSymbolAtLocation(call.Expression))
 	}
 	item := factCall{
 		Start:  node.Pos(),
@@ -276,4 +336,131 @@ func (b *factBuilder) typeOf(t *checker.Type) factType {
 	default:
 		return factType{Kind: "other"}
 	}
+}
+
+// bodyNode 把一个语句或表达式转成语法骨架。
+//
+// 递归时只保留语句、表达式和变量声明：类型节点（a: number 的 number）、
+// 修饰符和名字令牌都被跳过，所以树里不会出现类型名冒充的引用。
+func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
+	if node == nil {
+		return nil
+	}
+	out := &factNode{
+		Kind:   kindName(node.Kind),
+		Start:  node.Pos(),
+		Length: node.End() - node.Pos(),
+	}
+	if ast.IsExpression(node) {
+		typ := b.typeOf(b.checker.GetTypeAtLocation(node))
+		out.Type = &typ
+	}
+	switch {
+	case ast.IsIdentifier(node):
+		out.Name = node.Text()
+		if !b.declNameNodes[node] {
+			out.Target = b.lookup(b.checker.GetSymbolAtLocation(node))
+		}
+	case ast.IsBinaryExpression(node):
+		if token := node.AsBinaryExpression().OperatorToken; token != nil {
+			out.Op = operatorText(token.Kind)
+		}
+	case ast.IsPrefixUnaryExpression(node):
+		out.Op = operatorText(node.AsPrefixUnaryExpression().Operator)
+	case ast.IsPropertyAccessExpression(node):
+		// 只收对象那一侧。属性名本身也是 Identifier，通用递归会把它一起收进来，
+		// 让 console.log 看起来有两个子节点。
+		access := node.AsPropertyAccessExpression()
+		if name := access.Name(); name != nil {
+			out.Name = name.Text()
+		}
+		if access.Expression != nil {
+			if child := b.bodyNode(access.Expression); child != nil {
+				out.Children = append(out.Children, *child)
+			}
+		}
+		return out
+	case ast.IsVariableDeclaration(node):
+		// 局部变量不在本阶段的子集里，但它的名字不该被当成引用。
+		if name := node.Name(); name != nil {
+			b.declNameNodes[name] = true
+		}
+	}
+	node.ForEachChild(func(child *ast.Node) bool {
+		if !isStructure(child) {
+			return false
+		}
+		if c := b.bodyNode(child); c != nil {
+			out.Children = append(out.Children, *c)
+		}
+		return false
+	})
+	return out
+}
+
+// isStructure 报告一个子节点是否属于语法骨架。
+func isStructure(node *ast.Node) bool {
+	if ast.IsStatement(node) || ast.IsExpression(node) {
+		return true
+	}
+	switch node.Kind {
+	case ast.KindVariableDeclaration, ast.KindVariableDeclarationList:
+		return true
+	}
+	return false
+}
+
+// kindName 去掉 stringer 生成的 Kind 前缀：KindBlock 变成 Block。
+func kindName(k ast.Kind) string {
+	return strings.TrimPrefix(k.String(), "Kind")
+}
+
+// operatorText 把运算符 token 换成符号文本。
+//
+// 不能对 token 调 Text()：上游对 *ast.Token 没有实现这条路径，会 panic。
+// 未知的运算符保留种类名，能力检查会按「不在支持范围内」拒绝。
+func operatorText(k ast.Kind) string {
+	switch k {
+	case ast.KindPlusToken:
+		return "+"
+	case ast.KindMinusToken:
+		return "-"
+	case ast.KindAsteriskToken:
+		return "*"
+	case ast.KindSlashToken:
+		return "/"
+	case ast.KindPercentToken:
+		return "%"
+	case ast.KindAsteriskAsteriskToken:
+		return "**"
+	case ast.KindLessThanToken:
+		return "<"
+	case ast.KindLessThanEqualsToken:
+		return "<="
+	case ast.KindGreaterThanToken:
+		return ">"
+	case ast.KindGreaterThanEqualsToken:
+		return ">="
+	case ast.KindEqualsEqualsToken:
+		return "=="
+	case ast.KindEqualsEqualsEqualsToken:
+		return "==="
+	case ast.KindExclamationEqualsToken:
+		return "!="
+	case ast.KindExclamationEqualsEqualsToken:
+		return "!=="
+	case ast.KindAmpersandAmpersandToken:
+		return "&&"
+	case ast.KindBarBarToken:
+		return "||"
+	case ast.KindQuestionQuestionToken:
+		return "??"
+	case ast.KindAmpersandToken:
+		return "&"
+	case ast.KindBarToken:
+		return "|"
+	case ast.KindCaretToken:
+		return "^"
+	}
+	return kindName(k)
 }

@@ -4,9 +4,10 @@
 // 偏移映射成行列。除了适配包，它只依赖 Tynel 自己的 compiler/source，不导入
 // 上游任何 internal 包——这正是适配包存在的理由。
 //
-//	consumer <file.ts>          输出诊断 JSON；有 error 级诊断时退出 1
-//	consumer -quiet <file.ts>   只输出摘要
-//	consumer -facts <file.ts>   输出前端事实 JSON（开发接口）
+//	consumer <file.ts>             输出诊断 JSON；有 error 级诊断时退出 1
+//	consumer -quiet <file.ts>      只输出摘要
+//	consumer -facts <file.ts>      输出前端事实 JSON（开发接口）
+//	consumer -capability <file.ts> 先查源码，再查原生能力；有越界写法时退出 3
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Mahoo12138/tynel/compiler/capability"
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
 	"github.com/Mahoo12138/tynel/compiler/frontend"
 	"github.com/Mahoo12138/tynel/compiler/source"
@@ -40,6 +42,7 @@ type output struct {
 func main() {
 	quiet := flag.Bool("quiet", false, "只输出摘要")
 	facts := flag.Bool("facts", false, "输出前端事实而不是诊断")
+	capabilityCheck := flag.Bool("capability", false, "检查程序是否落在原生子集内")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "用法：consumer [-quiet] <file.ts>")
 	}
@@ -73,6 +76,11 @@ func main() {
 		return
 	}
 
+	if *capabilityCheck {
+		runCapability(snapshot)
+		return
+	}
+
 	diagnostics, err := check(snapshot)
 	if err != nil {
 		report(err)
@@ -102,11 +110,38 @@ func main() {
 	}
 }
 
-// dumpFacts 取事实、解码并校验，然后按规范形式重新编码输出。
+// runCapability 先做源码检查，再做能力检查。
 //
-// 输出的是解码后的事实，不是适配层的原始字节：解码会拒绝未知字段，校验会
-// 检查 ID、引用和调用是否自洽，能通过这两关的数据才值得给别人看。
-func dumpFacts(snapshot *source.Snapshot) ([]byte, error) {
+// 源码有错时能力结论没有意义——类型都没定下来，「这个类型有没有原生表示」
+// 无从谈起。所以顺序固定：源码错误退出 1，能力越界退出 3，全部通过退出 0。
+func runCapability(snapshot *source.Snapshot) {
+	diagnostics, err := check(snapshot)
+	if err != nil {
+		report(err)
+	}
+	for _, d := range diagnostics {
+		if d.Severity == source.SeverityError {
+			emitDiagnostics(diagnostics)
+			os.Exit(diagnostic.ExitSource)
+		}
+	}
+
+	facts, err := factsOf(snapshot)
+	if err != nil {
+		report(err)
+	}
+	findings, err := capability.Check(snapshot, facts)
+	if err != nil {
+		report(err)
+	}
+	emitFindings(findings)
+	if len(findings) > 0 {
+		os.Exit(diagnostic.ExitCapability)
+	}
+}
+
+// factsOf 取事实并解码校验，供 -facts 与 -capability 共用。
+func factsOf(snapshot *source.Snapshot) (*frontend.Facts, error) {
 	session, err := tyneladapter.Open(tyneladapter.Options{
 		FileName: snapshot.Path(),
 		Source:   snapshot.Bytes(),
@@ -122,7 +157,58 @@ func dumpFacts(snapshot *source.Snapshot) ([]byte, error) {
 	if closeErr != nil {
 		return nil, diagnostic.New(diagnostic.Internal, "frontend.close", "关闭会话失败").WithDetail(closeErr.Error())
 	}
-	decoded, err := frontend.Decode(raw)
+	return frontend.Decode(raw)
+}
+
+// finding 是能力诊断的对外形状。错误码是字符串（cap.*），与 TypeScript 的
+// 数字错误码不同，所以单独一个结构。
+type finding struct {
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
+	Category string `json:"category"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+func emitFindings(findings []*diagnostic.Diagnostic) {
+	items := make([]finding, 0, len(findings))
+	for _, d := range findings {
+		items = append(items, finding{
+			File:     d.File,
+			Line:     d.Line,
+			Column:   d.Column,
+			Category: d.Category.String(),
+			Code:     d.Code,
+			Message:  d.Message,
+		})
+	}
+	writeJSON(items)
+}
+
+func emitDiagnostics(diagnostics []source.Diagnostic) {
+	items := make([]output, 0, len(diagnostics))
+	for _, d := range diagnostics {
+		items = append(items, flatten(d))
+	}
+	writeJSON(items)
+}
+
+func writeJSON(v any) {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "写出结果失败：%v\n", err)
+		os.Exit(diagnostic.ExitInternal)
+	}
+}
+
+// dumpFacts 取事实、解码并校验，然后按规范形式重新编码输出。
+//
+// 输出的是解码后的事实，不是适配层的原始字节：解码会拒绝未知字段，校验会
+// 检查 ID、引用和调用是否自洽，能通过这两关的数据才值得给别人看。
+func dumpFacts(snapshot *source.Snapshot) ([]byte, error) {
+	decoded, err := factsOf(snapshot)
 	if err != nil {
 		return nil, err
 	}

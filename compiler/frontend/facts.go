@@ -58,6 +58,22 @@ func (k DeclKind) valid() bool {
 	return false
 }
 
+// Node 是函数体或初始化表达式的语法骨架。
+//
+// Kind 是上游的语法种类名（ReturnStatement、BinaryExpression…）。树里只有
+// 语句、表达式和变量声明，类型节点与名字令牌不进树，所以不会出现类型名冒充
+// 的引用。调用方按 Kind 判断是否支持，未知的 Kind 一律当作不支持。
+type Node struct {
+	Kind     string `json:"kind"`
+	Start    int    `json:"start"`
+	Length   int    `json:"length"`
+	Op       string `json:"op,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Target   int    `json:"target,omitempty"`
+	Type     *Type  `json:"type,omitempty"`
+	Children []Node `json:"children,omitempty"`
+}
+
 // Declaration 是一个声明。ID 在事实内唯一，同名声明各有各的 ID。
 type Declaration struct {
 	ID         int      `json:"id"`
@@ -68,6 +84,7 @@ type Declaration struct {
 	Type       *Type    `json:"type,omitempty"`
 	Result     *Type    `json:"result,omitempty"`
 	Parameters []int    `json:"parameters,omitempty"`
+	Body       *Node    `json:"body,omitempty"`
 }
 
 // Reference 是一次名称引用。Target 为 0 表示没有解析到本文件内的声明。

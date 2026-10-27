@@ -11,7 +11,9 @@ import (
 )
 
 func num(f float64) Expr     { return Number(f) }
+func boolLit(v bool) Expr    { return Bool(v) }
 func param(name string) Expr { return Expr{Op: OpParam, Name: name} }
+func not(e Expr) Expr        { return Expr{Op: OpNot, Operand: &e} }
 func call(name string, args ...Expr) Expr {
 	return Expr{Op: OpCall, Function: name, Args: args}
 }
@@ -78,10 +80,41 @@ func TestVerifyDiscard(t *testing.T) {
 	}
 }
 
+// TestVerifyBooleanModule 走一遍完整链路：bool 参数、not、bool 返回、bool
+// 实参、let 与丢弃。参数和结果都不经过数字真假转换。
+func TestVerifyBooleanModule(t *testing.T) {
+	invert := Function{
+		Name:   "invert",
+		Result: TypeBool,
+		Params: []Param{{Name: "value", Type: TypeBool}},
+		Body:   []Stmt{ret(not(param("value")))},
+	}
+	flag := Expr{Op: OpLocal, Name: "flag"}
+	m := module("main",
+		invert,
+		mainWith(
+			Stmt{Op: OpLet, Name: "flag", Value: &Expr{Op: OpBool, Value: boolPtr(false)}},
+			printStmt(call("invert", flag)),
+			discard(flag),
+		),
+	)
+	if err := Verify(m); err != nil {
+		t.Fatalf("boolean 模块应通过验证：%v", err)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
 	addFn := fn("add", TypeNumber, []string{"a", "b"}, ret(binary("+", param("a"), param("b"))))
+	invertFn := Function{
+		Name:   "invert",
+		Result: TypeBool,
+		Params: []Param{{Name: "value", Type: TypeBool}},
+		Body:   []Stmt{ret(not(param("value")))},
+	}
 
 	cases := []struct {
 		name   string
@@ -103,6 +136,9 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		{"number 函数空函数体", module("main", ok, fn("f", TypeNumber, nil)), "nir.missing-return"},
 		{"print 一个 void 调用", module("main", mainWith(printStmt(call("log"))), logFn), "nir.print-type"},
 		{"运算符操作数是 void 调用", module("main", mainWith(printStmt(binary("+", call("log"), num(1)))), logFn), "nir.operand-type"},
+		{"not 的操作数是 number", module("main", mainWith(printStmt(not(num(1))))), "nir.operand-type"},
+		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
+		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},
 		{"discard 引用未知局部值", module("main", mainWith(discard(Expr{Op: OpLocal, Name: "x"}))), "nir.unknown-local"},
 	}

@@ -55,19 +55,19 @@ type checker struct {
 func (c *checker) declaration(d *frontend.Declaration) {
 	switch d.Kind {
 	case frontend.DeclFunction:
-		c.declaredType(d.Result, d.Start, "函数 %q 的返回类型", d.Name, frontend.KindNumber, frontend.KindVoid)
+		c.declaredType(d.Result, d.Start, "函数 %q 的返回类型", d.Name, frontend.KindNumber, frontend.KindBoolean, frontend.KindVoid)
 	case frontend.DeclParameter:
-		c.declaredType(d.Type, d.Start, "参数 %q ", d.Name, frontend.KindNumber)
+		c.declaredType(d.Type, d.Start, "参数 %q ", d.Name, frontend.KindNumber, frontend.KindBoolean)
 	case frontend.DeclConst:
-		c.declaredType(d.Type, d.Start, "常量 %q ", d.Name, frontend.KindNumber)
+		c.declaredType(d.Type, d.Start, "常量 %q ", d.Name, frontend.KindNumber, frontend.KindBoolean)
 		if d.Body != nil && d.Body.Type != nil && d.Body.Type.Kind == frontend.KindVoid {
 			c.report(d.Body.Start, "cap.void-value", "常量 %q 的初始值是 void 调用，没有可用的值", d.Name)
 		}
 	}
 }
 
-// declaredType 核对声明上的类型。允许的类别按阶段放开：现在参数与常量只有
-// number，函数返回值是 number 或 void；boolean 在 03.01 加入。
+// declaredType 核对声明上的类型。允许的类别按阶段放开：参数与常量是 number
+// 或 boolean，函数返回值再加 void。
 //
 // format 是带一个 %q 的主语，调用方决定「参数 X 」还是「函数 X 的返回类型」，
 // 这样中文里不会出现「返回类型 是」这种多余的空格。
@@ -77,7 +77,7 @@ func (c *checker) declaredType(t *frontend.Type, offset int, format, name string
 		return
 	}
 	if t.Kind == frontend.KindAny {
-		c.report(offset, "cap.any", format+"是 any 或 unknown；本阶段只支持 number 和 void", name)
+		c.report(offset, "cap.any", format+"是 any 或 unknown；本阶段只支持 number、boolean 和 void", name)
 		return
 	}
 	for _, k := range allowed {
@@ -127,6 +127,14 @@ func (c *checker) node(n *frontend.Node) {
 			c.valueNode(&n.Children[i], "运算符 "+n.Op+" 的操作数")
 		}
 	case "PrefixUnaryExpression":
+		if n.Op == "!" {
+			if len(n.Children) != 1 {
+				c.report(n.Start, "cap.unsupported-syntax", "一元运算有 %d 个操作数", len(n.Children))
+				return
+			}
+			c.boolOperand(&n.Children[0], "! 的操作数")
+			return
+		}
 		if n.Op != "-" && n.Op != "+" {
 			c.report(n.Start, "cap.bad-operator", "一元运算符 %q 不在本阶段支持的范围之内", n.Op)
 			return
@@ -138,7 +146,7 @@ func (c *checker) node(n *frontend.Node) {
 		c.valueNode(&n.Children[0], "一元 "+n.Op+" 的操作数")
 	case "Identifier":
 		c.identifier(n)
-	case "NumericLiteral":
+	case "NumericLiteral", "TrueKeyword", "FalseKeyword":
 		return
 	case "CallExpression":
 		c.call(n)
@@ -175,6 +183,23 @@ func (c *checker) valueNode(n *frontend.Node, what string) {
 	}
 	if n.Type != nil && n.Type.Kind == frontend.KindVoid {
 		c.report(n.Start, "cap.void-value", "%s 需要一个值，但这里是 void 调用", what)
+		return
+	}
+	c.node(n)
+}
+
+// boolOperand 要求一个表达式是 boolean。TypeScript 允许对任意值取反（!5 是
+// false），但本阶段只把 boolean 的取反映射到原生指令，其余类型先拒绝。
+func (c *checker) boolOperand(n *frontend.Node, what string) {
+	if n == nil {
+		return
+	}
+	if n.Type == nil || n.Type.Kind != frontend.KindBoolean {
+		kind := frontend.KindOther
+		if n.Type != nil {
+			kind = n.Type.Kind
+		}
+		c.report(n.Start, "cap.bad-type", "%s是 %s，需要 boolean", what, kind)
 		return
 	}
 	c.node(n)
@@ -261,8 +286,8 @@ func (c *checker) consoleCall(n *frontend.Node, callee *frontend.Node, args []fr
 		c.report(args[0].Start, "cap.void-value", "console.log 需要一个值，但这里是 void 调用")
 		return
 	}
-	if args[0].Type == nil || args[0].Type.Kind != frontend.KindNumber {
-		c.report(args[0].Start, "cap.bad-console-call", "console.log 只接受 number，本阶段不支持其他类型")
+	if args[0].Type == nil || (args[0].Type.Kind != frontend.KindNumber && args[0].Type.Kind != frontend.KindBoolean) {
+		c.report(args[0].Start, "cap.bad-console-call", "console.log 只接受 number 或 boolean，本阶段不支持其他类型")
 		return
 	}
 	c.node(&args[0])

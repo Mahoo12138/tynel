@@ -31,8 +31,9 @@ import (
 
 // 固定支持文件提供的函数名。
 const (
-	supportPrint = "tynelPrintFloat64"
-	supportBits  = "tynelNumberFromBits"
+	supportPrintFloat = "tynelPrintFloat64"
+	supportPrintBool  = "tynelPrintBool"
+	supportBits       = "tynelNumberFromBits"
 )
 
 var binaryOps = map[string]ir.Op{
@@ -100,9 +101,13 @@ func inject(target *ir.Package, path string) error {
 		funcs[f.Name] = fn
 	}
 
-	helper, _ := types.LocalPkg.Lookup(supportPrint).Def.(*ir.Name)
+	helper, _ := types.LocalPkg.Lookup(supportPrintFloat).Def.(*ir.Name)
 	if helper == nil {
-		return fmt.Errorf("缺少固定支持函数 %s", supportPrint)
+		return fmt.Errorf("缺少固定支持函数 %s", supportPrintFloat)
+	}
+	boolHelper, _ := types.LocalPkg.Lookup(supportPrintBool).Def.(*ir.Name)
+	if boolHelper == nil {
+		return fmt.Errorf("缺少固定支持函数 %s", supportPrintBool)
 	}
 	bitsHelper, _ := types.LocalPkg.Lookup(supportBits).Def.(*ir.Name)
 	if bitsHelper == nil {
@@ -110,7 +115,7 @@ func inject(target *ir.Package, path string) error {
 	}
 
 	for _, f := range m.Functions {
-		if err := buildBody(funcs[f.Name], f, funcs, helper, bitsHelper, pos); err != nil {
+		if err := buildBody(funcs[f.Name], f, funcs, helper, boolHelper, bitsHelper, pos); err != nil {
 			return err
 		}
 	}
@@ -126,13 +131,21 @@ func inject(target *ir.Package, path string) error {
 
 func signature(f function, pos src.XPos) (*types.Type, error) {
 	params := make([]*types.Field, 0, len(f.Params))
-	for range f.Params {
-		params = append(params, types.NewField(pos, nil, types.Types[types.TFLOAT64]))
+	for _, p := range f.Params {
+		t, err := goType(p.Type)
+		if err != nil {
+			return nil, fmt.Errorf("函数 %q 的参数 %q：%w", f.Name, p.Name, err)
+		}
+		params = append(params, types.NewField(pos, nil, t))
 	}
 	var results []*types.Field
 	switch f.Result {
-	case "number":
-		results = append(results, types.NewField(pos, nil, types.Types[types.TFLOAT64]))
+	case "number", "bool":
+		t, err := goType(f.Result)
+		if err != nil {
+			return nil, fmt.Errorf("函数 %q 的返回类型：%w", f.Name, err)
+		}
+		results = append(results, types.NewField(pos, nil, t))
 	case "void":
 	default:
 		return nil, fmt.Errorf("函数 %q 的返回类型 %q 不支持", f.Name, f.Result)
@@ -140,7 +153,19 @@ func signature(f function, pos src.XPos) (*types.Type, error) {
 	return types.NewSignature(nil, params, results), nil
 }
 
-func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsHelper *ir.Name, pos src.XPos) error {
+// goType 把 NIR 类型映射成 Go 类型。bool 用一字节的 TBOOL，不借 float64 的
+// 0 与 1 表示：参数和结果都不做数字真假转换。
+func goType(t string) (*types.Type, error) {
+	switch t {
+	case "number":
+		return types.Types[types.TFLOAT64], nil
+	case "bool":
+		return types.Types[types.TBOOL], nil
+	}
+	return nil, fmt.Errorf("类型 %q 不支持", t)
+}
+
+func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, boolHelper, bitsHelper *ir.Name, pos src.XPos) error {
 	params := make(map[string]*ir.Name, len(f.Params))
 	locals := make(map[string]*ir.Name)
 	for i, p := range f.Params {
@@ -176,8 +201,13 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsH
 				return err
 			}
 			// 局部值就是一个 Go 自动变量：声明在函数里，赋值一次，之后按名字读。
+			// 类型跟着值走，bool 局部值不会被塞进 float64 槽位。
+			typ, err := exprGoType(s.Value, params, locals, funcs)
+			if err != nil {
+				return err
+			}
 			sym := &types.Sym{Name: s.Name, Pkg: types.LocalPkg}
-			local := fn.NewLocal(pos, sym, types.Types[types.TFLOAT64])
+			local := fn.NewLocal(pos, sym, typ)
 			locals[s.Name] = local
 			body = append(body, ir.NewAssignStmt(pos, local, v))
 		case "discard":
@@ -190,20 +220,33 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, bitsH
 				body = append(body, v)
 				break
 			}
-			// 数值表达式不能裸着当语句：一个光秃秃的变量名会让编译器报
+			// 数值或布尔表达式不能裸着当语句：一个光秃秃的变量名会让编译器报
 			// "unexpected stmt"。赋给一个从不读取的临时变量，求值照做，
 			// 结果丢掉；死存储由 SSA 清掉。
+			typ, err := exprGoType(s.Value, params, locals, funcs)
+			if err != nil {
+				return err
+			}
 			discarded++
 			sym := &types.Sym{Name: fmt.Sprintf("_tynel_discard_%d", discarded), Pkg: types.LocalPkg}
-			tmp := fn.NewLocal(pos, sym, types.Types[types.TFLOAT64])
+			tmp := fn.NewLocal(pos, sym, typ)
 			body = append(body, ir.NewAssignStmt(pos, tmp, v))
 		case "print":
 			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
 			if err != nil {
 				return err
 			}
-			// print 不生成 Go 源码，而是调用固定支持函数。
-			body = append(body, ir.NewCallExpr(pos, ir.OCALL, helper, []ir.Node{v}))
+			// print 不生成 Go 源码，而是调用固定支持函数；number 与 bool 各有
+			// 一个目标，选择依据是值的类型，不是运行时的判断。
+			typ, err := exprGoType(s.Value, params, locals, funcs)
+			if err != nil {
+				return err
+			}
+			target := helper
+			if typ == types.Types[types.TBOOL] {
+				target = boolHelper
+			}
+			body = append(body, ir.NewCallExpr(pos, ir.OCALL, target, []ir.Node{v}))
 		default:
 			return fmt.Errorf("不支持的语句 op %q", s.Op)
 		}
@@ -239,6 +282,20 @@ func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir
 			return ir.NewCallExpr(pos, ir.OCALL, bitsHelper, []ir.Node{lit}), nil
 		}
 		return ir.NewBasicLit(pos, types.Types[types.TFLOAT64], constant.MakeFloat64(v)), nil
+	case "bool":
+		if e.Value == nil {
+			return nil, fmt.Errorf("bool 缺少 value")
+		}
+		return ir.NewBasicLit(pos, types.Types[types.TBOOL], constant.MakeBool(*e.Value)), nil
+	case "not":
+		if e.Operand == nil {
+			return nil, fmt.Errorf("not 缺少操作数")
+		}
+		x, err := buildExpr(e.Operand, params, locals, funcs, bitsHelper, pos)
+		if err != nil {
+			return nil, err
+		}
+		return ir.NewUnaryExpr(pos, ir.ONOT, x), nil
 	case "param":
 		n, ok := params[e.Name]
 		if !ok {
@@ -282,6 +339,41 @@ func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir
 	default:
 		return nil, fmt.Errorf("不支持的表达式 op %q", e.Op)
 	}
+}
+
+// exprGoType 返回一个 NIR 表达式在 Go 里的类型。局部值、参数和调用的类型
+// 从已建好的声明上取；字面量与运算按操作符判断。它只服务于「分配什么类型的
+// 局部变量」「调用哪个打印函数」，不重复验证器的工作。
+func exprGoType(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir.Func) (*types.Type, error) {
+	switch e.Op {
+	case "number", "binary":
+		return types.Types[types.TFLOAT64], nil
+	case "bool", "not":
+		return types.Types[types.TBOOL], nil
+	case "param":
+		n, ok := params[e.Name]
+		if !ok {
+			return nil, fmt.Errorf("引用不存在的参数 %q", e.Name)
+		}
+		return n.Type(), nil
+	case "local":
+		n, ok := locals[e.Name]
+		if !ok {
+			return nil, fmt.Errorf("引用未定义的局部值 %q", e.Name)
+		}
+		return n.Type(), nil
+	case "call":
+		callee, ok := funcs[e.Function]
+		if !ok {
+			return nil, fmt.Errorf("调用不存在的函数 %q", e.Function)
+		}
+		results := callee.Type().Results()
+		if len(results) != 1 {
+			return nil, fmt.Errorf("函数 %q 没有返回值，不能作为值使用", e.Function)
+		}
+		return results[0].Type, nil
+	}
+	return nil, fmt.Errorf("无法确定表达式 op %q 的类型", e.Op)
 }
 
 // isVoidCall 报告一个 NIR 表达式是不是对 void 函数的直接调用。只有它可以直接
@@ -343,10 +435,12 @@ type stmt struct {
 type expr struct {
 	Op       string `json:"op"`
 	Bits     string `json:"bits"`
+	Value    *bool  `json:"value"`
 	Name     string `json:"name"`
 	Function string `json:"function"`
 	Args     []expr `json:"args"`
 	Operator string `json:"operator"`
 	Left     *expr  `json:"left"`
 	Right    *expr  `json:"right"`
+	Operand  *expr  `json:"operand"`
 }

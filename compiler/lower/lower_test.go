@@ -43,6 +43,27 @@ func ident(name string, target int) frontend.Node {
 	return n
 }
 
+func boolIdent(name string, target int) frontend.Node {
+	n := typed("Identifier", frontend.KindBoolean)
+	n.Name = name
+	n.Target = target
+	return n
+}
+
+func boolLiteral(v bool) frontend.Node {
+	kind := "FalseKeyword"
+	if v {
+		kind = "TrueKeyword"
+	}
+	return typed(kind, frontend.KindBoolean)
+}
+
+func notNode(operand frontend.Node) frontend.Node {
+	n := typed("PrefixUnaryExpression", frontend.KindBoolean, operand)
+	n.Op = "!"
+	return n
+}
+
 func binary(op string, left, right frontend.Node) frontend.Node {
 	n := typed("BinaryExpression", frontend.KindNumber, left, right)
 	n.Op = op
@@ -292,5 +313,129 @@ func TestRejectsDeepExpression(t *testing.T) {
 	var d *diagnostic.Diagnostic
 	if !errors.As(err, &d) || d.Code != "facts.body-too-deep" {
 		t.Fatalf("应报 facts.body-too-deep，实际 %v", err)
+	}
+}
+
+// booleanFacts 对应：
+//
+//	function invert(value: boolean): boolean { return !value; }
+//	const flag: boolean = false;
+//	console.log(invert(flag));
+func booleanFacts() *frontend.Facts {
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	invertBody := node("Block", node("ReturnStatement", notNode(boolIdent("value", 2))))
+	init := typed("CallExpression", frontend.KindBoolean, ident("invert", 1), boolIdent("flag", 3))
+	constNode := node("Const")
+	constNode.Decl = 3
+	module := node("Block", constNode, node("ExpressionStatement", consoleLog(init)))
+
+	return &frontend.Facts{
+		SchemaVersion: 1,
+		Session:       "s",
+		File:          "/tmp/t.ts",
+		Module:        &module,
+		Declarations: []frontend.Declaration{
+			{ID: 1, Kind: frontend.DeclFunction, Name: "invert", Start: 0, Length: 20, Result: &boolean, Parameters: []int{2}, Body: &invertBody},
+			{ID: 2, Kind: frontend.DeclParameter, Name: "value", Start: 4, Length: 5, Type: &boolean},
+			{ID: 3, Kind: frontend.DeclConst, Name: "flag", Start: 30, Length: 4, Type: &boolean, Body: boolNode(false)},
+		},
+	}
+}
+
+func boolNode(v bool) *frontend.Node {
+	n := boolLiteral(v)
+	return &n
+}
+
+func TestLowersBooleanProgram(t *testing.T) {
+	module := lowerFacts(t, booleanFacts())
+	invert := module.Functions[0]
+	if invert.Result != nir.TypeBool || len(invert.Params) != 1 || invert.Params[0].Type != nir.TypeBool {
+		t.Fatalf("invert 的签名不对：%+v", invert)
+	}
+	if got := invert.Body[0].Value; got == nil || got.Op != nir.OpNot || got.Operand == nil || got.Operand.Op != nir.OpParam {
+		t.Fatalf("invert 的函数体应是 not(param)：%+v", got)
+	}
+
+	main := module.Functions[1]
+	if len(main.Body) != 3 {
+		t.Fatalf("main 应有 3 条语句，实际 %d：%+v", len(main.Body), main.Body)
+	}
+	let := main.Body[0]
+	if let.Op != nir.OpLet || let.Value == nil || let.Value.Op != nir.OpBool || let.Value.Value == nil || *let.Value.Value {
+		t.Fatalf("第一条应是 let flag = false：%+v", let)
+	}
+	print := main.Body[1]
+	if print.Op != nir.OpPrint || print.Value == nil || print.Value.Op != nir.OpCall {
+		t.Fatalf("第二条应是 print invert(flag)：%+v", print)
+	}
+	if arg := print.Value.Args[0]; arg.Op != nir.OpLocal || arg.Name != "flag" {
+		t.Fatalf("invert 的实参应是 local flag：%+v", arg)
+	}
+}
+
+func TestRejectsBooleanMismatches(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*frontend.Facts)
+		code   string
+	}{
+		{
+			name: "bool 函数返回 number",
+			mutate: func(f *frontend.Facts) {
+				body := node("Block", node("ReturnStatement", literal("0x3ff0000000000000")))
+				f.Declarations[0].Body = &body
+			},
+			code: "lower.bad-type",
+		},
+		{
+			name: "! 作用在 number 上",
+			mutate: func(f *frontend.Facts) {
+				body := node("Block", node("ReturnStatement", notNode(ident("value", 2))))
+				f.Declarations[0].Body = &body
+				f.Declarations[1].Type = &frontend.Type{Kind: frontend.KindNumber}
+			},
+			code: "lower.bad-type",
+		},
+		{
+			name: "boolean 常量用 number 初始化",
+			mutate: func(f *frontend.Facts) {
+				n := literal("0x3ff0000000000000")
+				f.Declarations[2].Body = &n
+			},
+			code: "lower.bad-type",
+		},
+		{
+			name: "boolean 参数收到 number",
+			mutate: func(f *frontend.Facts) {
+				module := *f.Module
+				console := module.Children[1].Children[0]
+				invert := console.Children[1]
+				invert.Children[1] = literal("0x3ff0000000000000")
+				f.Module = &module
+			},
+			code: "lower.bad-type",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			facts := booleanFacts()
+			c.mutate(facts)
+			module, err := Lower(snapshot(t), facts)
+			if err == nil {
+				t.Fatal("应被拒绝")
+			}
+			if module != nil {
+				t.Fatal("失败时不应返回模块")
+			}
+			var d *diagnostic.Diagnostic
+			if !errors.As(err, &d) || d.Code != c.code {
+				t.Fatalf("错误码应为 %s，实际 %v", c.code, err)
+			}
+			if d.Category != diagnostic.Internal {
+				t.Fatalf("降低失败属于内部故障，实际 %v", d.Category)
+			}
+		})
 	}
 }

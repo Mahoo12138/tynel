@@ -177,8 +177,8 @@ func (m *Module) check(limits Limits) error {
 		if f.Name == "" {
 			return badf("nir.missing", "%s 缺少 name", path)
 		}
-		if f.Result != TypeNumber && f.Result != TypeVoid {
-			return badf("nir.bad-value", "%s.result 为 %q，只接受 number 或 void", path, f.Result)
+		if f.Result != TypeNumber && f.Result != TypeBool && f.Result != TypeVoid {
+			return badf("nir.bad-value", "%s.result 为 %q，只接受 number、bool 或 void", path, f.Result)
 		}
 		nodes++
 		for j := range f.Params {
@@ -187,8 +187,8 @@ func (m *Module) check(limits Limits) error {
 			if p.Name == "" {
 				return badf("nir.missing", "%s 缺少 name", ppath)
 			}
-			if p.Type != TypeNumber {
-				return badf("nir.bad-value", "%s.type 为 %q，首版只接受 number", ppath, p.Type)
+			if p.Type != TypeNumber && p.Type != TypeBool {
+				return badf("nir.bad-value", "%s.type 为 %q，只接受 number 或 bool", ppath, p.Type)
 			}
 			nodes++
 		}
@@ -268,6 +268,22 @@ func checkExpr(root *Expr, rootPath string, depth int, nodes *int, limits Limits
 			if _, err := parseBits(e.Bits); err != nil {
 				return badf("nir.bad-bits", "%s 的 bits 不合法：%v", it.path, err)
 			}
+		case OpBool:
+			if err := onlyFields(e, it.path, "value"); err != nil {
+				return err
+			}
+			if e.Value == nil {
+				// false 是合法值，不能靠「零值」判断缺失；这里看的是指针。
+				return badf("nir.missing", "%s 的 bool 缺少 value", it.path)
+			}
+		case OpNot:
+			if err := onlyFields(e, it.path, "operand"); err != nil {
+				return err
+			}
+			if e.Operand == nil {
+				return badf("nir.missing", "%s 的 not 缺少 operand", it.path)
+			}
+			stack = append(stack, item{e.Operand, it.path + ".operand", it.depth + 1})
 		case OpParam, OpLocal:
 			if err := onlyFields(e, it.path, "name"); err != nil {
 				return err
@@ -302,7 +318,7 @@ func checkExpr(root *Expr, rootPath string, depth int, nodes *int, limits Limits
 		case "":
 			return badf("nir.missing", "%s 缺少 op", it.path)
 		default:
-			return badf("nir.bad-op", "%s.op 为 %q，只接受 number、param、call 或 binary", it.path, e.Op)
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 number、bool、param、local、call、binary 或 not", it.path, e.Op)
 		}
 	}
 	return nil
@@ -316,12 +332,14 @@ func onlyFields(e *Expr, path, allowed string) error {
 	}
 	present := map[string]bool{
 		"bits":     e.Bits != "",
+		"value":    e.Value != nil,
 		"name":     e.Name != "",
 		"function": e.Function != "",
 		"args":     len(e.Args) > 0,
 		"operator": e.Operator != "",
 		"left":     e.Left != nil,
 		"right":    e.Right != nil,
+		"operand":  e.Operand != nil,
 	}
 	for name, ok := range present {
 		if ok && !permitted[name] {

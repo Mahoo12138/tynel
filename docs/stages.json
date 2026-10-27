@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "02.09",
+  "currentImplementationNode": "03.01",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -290,7 +290,7 @@
       "dependsOn": [
         "02"
       ],
-      "status": "planned",
+      "status": "active",
       "plannedNote": "docs/notes/03-choices.md",
       "goal": "分支、布尔短路和同类结果三元选择",
       "gateSubnode": "03.08",
@@ -302,9 +302,13 @@
             "02.09"
           ],
           "planSection": "PLAN.md#task-03-01",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/nir.md",
+            "docs/reference/capability.md",
+            "docs/validation/03-01-boolean.md"
+          ]
         },
         {
           "id": "03.02",

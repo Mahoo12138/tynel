@@ -5,8 +5,8 @@
 #
 # 依次验证：前端源码身份、适配包副本、外部消费者测试、干净输入、类型错误与
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
-# 缺失被拒、声明事实、原生能力白名单、void 与丢弃结果、输出格式、从源码降低
-# 到可运行的原生程序，以及主命令行的 check、build、run、dump。
+# 缺失被拒、声明事实、原生能力白名单、void 与丢弃结果、boolean 标量、输出
+# 格式、从源码降低到可运行的原生程序，以及主命令行的 check、build、run、dump。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
 # 模块缓存放在 .work/frontend/gomodcache，首次运行需要能访问 Go 模块代理。
@@ -288,6 +288,7 @@ else
   lower_case "$ROOT/bridge/tsgo/testdata/lower/same-name.ts" "8"
   lower_case "$ROOT/bridge/tsgo/testdata/void.ts" $'7\n8'
   lower_case "$ROOT/bridge/tsgo/testdata/discard.ts" "42"
+  lower_case "$ROOT/bridge/tsgo/testdata/boolean.ts" "true"
   lower_case "$ROOT/bridge/tsgo/testdata/output.ts" $'0.30000000000000004\n-0\n+Inf\n-Inf\nNaN'
 
   # 输出逐行读回成 binary64：字符串对得上还不够，值也要对得上。

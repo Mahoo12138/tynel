@@ -86,6 +86,37 @@ func TestExampleShape(t *testing.T) {
 	}
 }
 
+func TestBoolSurvivesEncoding(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		m := minimalModule()
+		m.Functions[0].Body = []Stmt{{Op: OpPrint, Value: &Expr{Op: OpBool, Value: &want}}}
+		data, err := EncodeBytes(m)
+		if err != nil {
+			t.Fatalf("编码 bool %v 失败：%v", want, err)
+		}
+		// false 必须写出来，不能因为它是零值就被 omitempty 吃掉。
+		if !bytes.Contains(data, []byte(`"value": `)) {
+			t.Fatalf("编码结果缺少 value 字段：%s", data)
+		}
+		back, err := DecodeBytes(data, DefaultLimits())
+		if err != nil {
+			t.Fatalf("回读 bool %v 失败：%v", want, err)
+		}
+		got := back.Functions[0].Body[0].Value
+		if got.Op != OpBool || got.Value == nil || *got.Value != want {
+			t.Fatalf("bool %v 保存后读回为 %+v", want, got)
+		}
+	}
+}
+
+func TestBoolRequiresValue(t *testing.T) {
+	_, err := DecodeBytes([]byte(`{"schemaVersion":1,"entry":"main","functions":[
+		{"name":"main","params":[],"result":"void","body":[{"op":"print","value":{"op":"bool"}}]}]}`), DefaultLimits())
+	if err == nil || !strings.Contains(err.Error(), "nir.missing") {
+		t.Fatalf("缺 value 的 bool 应被拒绝，实际 %v", err)
+	}
+}
+
 func TestSpecialValuesSurviveEncoding(t *testing.T) {
 	cases := []struct {
 		name  string

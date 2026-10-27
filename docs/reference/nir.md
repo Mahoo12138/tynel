@@ -38,7 +38,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 }
 ```
 
-`result` 只接受 `number` 或 `void`；`params[].type` 首版只接受 `number`。`pos` 可以省略，手写 NIR 时通常不写；前端产出时填写，用于把后端的错误指回源码。参数表为空时，Go 的编码会写成 `null`；读入时 `null` 与 `[]` 等价，都表示没有参数。
+`result` 接受 `number`、`bool` 或 `void`；`params[].type` 接受 `number` 或 `bool`。`pos` 可以省略，手写 NIR 时通常不写；前端产出时填写，用于把后端的错误指回源码。参数表为空时，Go 的编码会写成 `null`；读入时 `null` 与 `[]` 等价，都表示没有参数。
 
 ## 语句
 
@@ -53,19 +53,23 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 
 局部值的作用域是当前函数，必须先用 `let` 定义、后按名字读取；同名重复定义和先读后定义都由验证器拒绝（`nir.duplicate-name`、`nir.unknown-local`）。
 
-`discard` 对应源码里的表达式语句：`f();` 与 `answer;` 都是这个形状。它丢弃的是结果，不是求值——调用照常执行，副作用保留，值不打印。被丢弃的表达式可以是 `number`，也可以是 `void` 调用；后者在 bridge 里直接作为语句，前者需要一个承接结果的位置（见 [bridge 说明](bridge.md)）。分支和循环的语句形式随 03、04 节点加入。
+`discard` 对应源码里的表达式语句：`f();` 与 `answer;` 都是这个形状。它丢弃的是结果，不是求值——调用照常执行，副作用保留，值不打印。被丢弃的表达式可以是 `number`、`bool`，也可以是 `void` 调用；后者在 bridge 里直接作为语句，前两者需要一个承接结果的位置（见 [bridge 说明](bridge.md)）。分支和循环的语句形式随 03、04 节点加入。
 
 ## 表达式
 
 | `op` | 必填字段 | 含义 |
 | --- | --- | --- |
 | `number` | `bits` | binary64 字面量，用位模式表示 |
+| `bool` | `value` | `true` 或 `false`；`false` 也必须有这个字段 |
 | `param` | `name` | 引用当前函数的参数 |
 | `local` | `name` | 引用前面 `let` 定义的局部值 |
 | `call` | `function`，`args` 可选 | 直接调用具名函数 |
 | `binary` | `operator`、`left`、`right` | 二元运算，运算符限 `+`、`-`、`*`、`/` |
+| `not` | `operand` | 布尔取反，操作数必须是 `bool` |
 
 任何表达式都可以带 `pos`。不属于该 `op` 的字段一律拒绝。
+
+`bool` 的 `value` 用指针保存，所以 `false` 与「字段缺失」是两种不同的输入：前者是合法值，后者按 `nir.missing` 拒绝。JSON 里写成 `{"op":"bool","value":false}`。
 
 ## 数字为什么存位模式
 
@@ -99,9 +103,9 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | 声明唯一 | 函数名不得重复；同一函数内参数名不得重复 |
 | 参数引用 | `param` 的名字必须是当前函数的参数 |
 | 调用 | 目标函数必须存在；实参个数等于形参个数；每个实参类型等于对应形参类型 |
-| 类型 | 字面量、参数和四则运算为 `number`；调用表达式的类型是被调函数的返回类型 |
-| 返回值 | 返回 `number` 的函数必须以带值的 `return` 结束；`void` 函数的 `return` 不带值 |
-| 输出 | `print` 只接受 `number`，`void` 调用不能作为值使用 |
+| 类型 | 字面量是 `number` 或 `bool`；参数取它声明的类型；四则运算的结果是 `number`；`not` 的操作数与结果都是 `bool`；调用表达式的类型是被调函数的返回类型 |
+| 返回值 | 返回 `number` 或 `bool` 的函数必须以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值 |
+| 输出 | `print` 只接受 `number` 或 `bool`，`void` 调用不能作为值使用 |
 | 丢弃 | `discard` 的表达式必须成立，结果类型不限 |
 
 验证器不导入 tsgo 或 Go 内部对象，也不假设模块来自 JSON：内存里直接构造的结构同样要过这一关。表达式必须是树，共享节点和循环节点都被拒绝——循环结构会让任何遍历不终止，共享节点在写回文件时会被复制成两份。
@@ -136,11 +140,11 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.arg-count` | 语义 | 实参个数与形参不符 |
 | `nir.arg-type` | 语义 | 实参类型与形参不符 |
 | `nir.result-type` | 语义 | 返回值与函数声明不符，或 `void` 函数带返回值 |
-| `nir.print-type` | 语义 | `print` 的参数不是 `number` |
-| `nir.local-type` | 语义 | `let` 的值不是 `number` |
+| `nir.print-type` | 语义 | `print` 的参数不是 `number` 或 `bool` |
+| `nir.local-type` | 语义 | `let` 的值不是 `number` 或 `bool` |
 | `nir.unknown-local` | 语义 | 引用了尚未定义的局部值 |
-| `nir.operand-type` | 语义 | 运算符的操作数不是 `number` |
-| `nir.missing-return` | 语义 | 返回 `number` 的函数没有以 `return` 结束 |
+| `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number` |
+| `nir.missing-return` | 语义 | 返回 `number` 或 `bool` 的函数没有以 `return` 结束 |
 | `nir.io` | 环境 | 打开、写入或改名失败 |
 
 带源码位置的节点出错时，诊断会附上 `文件:行:列`。
@@ -166,6 +170,15 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 ```
 
 `0x4044000000000000` 是 40，`0x4000000000000000` 是 2。这里只保存结构，不解算结果；真正相加发生在后端（01.05）。
+
+boolean 的形状同样直接：
+
+```json
+{ "op": "print",
+  "value": { "op": "not", "operand": { "op": "bool", "value": false } } }
+```
+
+这段输出 `true`。`false` 写在 `value` 里，不是省略字段；`not` 只接受 `bool`，不会把数字的 0 当成 false。
 
 校验示例、格式规则与语义规则：
 

@@ -328,6 +328,8 @@ func (b *factBuilder) walk(node *ast.Node) {
 		b.call(node)
 	case ast.IsNumericLiteral(node):
 		b.expression(node, "number")
+	case ast.IsBooleanLiteral(node):
+		b.expression(node, "boolean")
 	case ast.IsBinaryExpression(node):
 		b.expression(node, "binary")
 	}
@@ -502,6 +504,8 @@ func operatorText(k ast.Kind) string {
 		return "%"
 	case ast.KindAsteriskAsteriskToken:
 		return "**"
+	case ast.KindExclamationToken:
+		return "!"
 	case ast.KindLessThanToken:
 		return "<"
 	case ast.KindLessThanEqualsToken:

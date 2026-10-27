@@ -1,6 +1,6 @@
 # 输出格式
 
-`print` 语句在运行时调用固定支持文件里的 `tynelPrintFloat64`。它是一个受限输出：一次调用写一个 `number`，占一行。它不是 Node 的 `console`——没有格式化占位符，不接受多个参数，也不写标准错误。
+`print` 语句在运行时调用固定支持文件里的打印函数：`number` 走 `tynelPrintFloat64`，`boolean` 走 `tynelPrintBool`。它们是受限输出：一次调用写一个值，占一行。它们不是 Node 的 `console`——没有格式化占位符，不接受多个参数，也不写标准错误。
 
 本页定义这套格式，以及为什么现在这么定。
 
@@ -19,6 +19,20 @@ console.log(1 / 0);
 ```
 
 每次 `console.log(<number>)` 对应标准输出的一行，行尾一个换行符。没有前缀、没有缩进、没有时间戳：输出是给程序读的，不是给人看的日志。
+
+`boolean` 只有两个值，拼写固定：
+
+```typescript
+console.log(true);
+console.log(false);
+```
+
+```text
+true
+false
+```
+
+它不经过数字：不会输出 `1` 和 `0`，也不接受 `0` 当 `false`。参数类型在能力检查阶段就定死，运行时的打印函数只认 `bool`。
 
 ## 格式规则
 
@@ -69,11 +83,11 @@ console.log(1 / 0);
 ## 不做什么
 
 - 不接受多个参数：`console.log(a, b)` 报 `cap.bad-console-call`。
-- 不接受字符串、布尔：字符串不在本阶段子集内，布尔输出在 03.01 加入。
+- 不接受字符串：字符串不在本阶段子集内。
 - 不做格式化：没有 `%d`、`%s`，也没有模板字符串。
 - 不缓冲：每次调用立即写一行，程序崩溃前已经输出的内容不会丢。
 - 不写标准错误：诊断走编译器的标准错误，程序输出只走标准输出，两者不混。
 
 ## 打印器不是 console
 
-把这套东西叫「console」容易误会。它没有 `console.error`、`console.warn`、`console.table`，也没有对象检查器；它只把一个 binary64 写成一行文本。文档里提到它时写「受限输出」或「打印器」，不写「Node console 的一个实现」。
+把这套东西叫「console」容易误会。它没有 `console.error`、`console.warn`、`console.table`，也没有对象检查器；它只把一个 `number` 或 `boolean` 写成一行文本。文档里提到它时写「受限输出」或「打印器」，不写「Node console 的一个实现」。

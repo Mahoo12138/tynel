@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "invert",
+      "params": [
+        {"name": "value", "type": "bool"}
+      ],
+      "result": "bool",
+      "body": [
+        {
+          "op": "return",
+          "value": {
+            "op": "not",
+            "operand": {"op": "param", "name": "value"}
+          }
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {
+          "op": "print",
+          "value": {
+            "op": "call",
+            "function": "invert",
+            "args": [
+              {"op": "bool", "value": false}
+            ]
+          }
+        },
+        {"op": "return"}
+      ]
+    }
+  ]
+}

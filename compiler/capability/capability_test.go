@@ -37,6 +37,13 @@ func ident(name string, target int) frontend.Node {
 	return n
 }
 
+func boolIdent(name string, target int) frontend.Node {
+	n := typed("Identifier", frontend.KindBoolean)
+	n.Name = name
+	n.Target = target
+	return n
+}
+
 func binary(op string, left, right frontend.Node) frontend.Node {
 	n := typed("BinaryExpression", frontend.KindNumber, left, right)
 	n.Op = op
@@ -213,9 +220,50 @@ func TestDeclaredTypesAreChecked(t *testing.T) {
 
 	facts = base()
 	facts.Declarations = append(facts.Declarations,
-		frontend.Declaration{ID: 4, Kind: frontend.DeclConst, Name: "flag", Start: 30, Length: 4, Type: &frontend.Type{Kind: frontend.KindBoolean}},
+		frontend.Declaration{ID: 4, Kind: frontend.DeclConst, Name: "label", Start: 30, Length: 5, Type: &stringType},
 	)
 	wantCode(t, check(t, facts), "cap.bad-type")
+}
+
+// TestBooleanDeclarationsPass 确认 boolean 已经进入标量子集：参数、返回值与
+// 常量都可以是 boolean，console.log 也接受它。
+func TestBooleanDeclarationsPass(t *testing.T) {
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	facts := base()
+	facts.Declarations[0].Result = &boolean
+	facts.Declarations[1].Type = &boolean
+	body := node("Block", node("ReturnStatement", boolIdent("a", 2)))
+	facts.Declarations[0].Body = &body
+	facts.Declarations = append(facts.Declarations,
+		frontend.Declaration{ID: 4, Kind: frontend.DeclConst, Name: "flag", Start: 30, Length: 4, Type: &boolean},
+	)
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("boolean 声明应通过，实际 %v", codes(findings))
+	}
+}
+
+// TestBangRequiresBoolean 确认 `!` 只接受 boolean。TypeScript 允许 !5，本阶段
+// 不把数字的真假转换带进原生后端。
+func TestBangRequiresBoolean(t *testing.T) {
+	facts := base()
+	not := typed("PrefixUnaryExpression", frontend.KindBoolean, ident("a", 2))
+	not.Op = "!"
+	body := node("Block", node("ReturnStatement", not))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	// 作用在 boolean 参数上是合法的。
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	facts.Declarations[1].Type = &boolean
+	not = typed("PrefixUnaryExpression", frontend.KindBoolean, boolIdent("a", 2))
+	not.Op = "!"
+	body = node("Block", node("ReturnStatement", not))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("!boolean 应通过，实际 %v", codes(findings))
+	}
 }
 
 // TestDiscardedStatementsPass 确认「求值但丢弃」不是错误：调用语句与裸标识符
@@ -246,6 +294,19 @@ func TestConsoleCall(t *testing.T) {
 	facts.Declarations[0].Body = &body
 	if findings := check(t, facts); len(findings) != 0 {
 		t.Fatalf("console.log(number) 应通过，实际 %v", codes(findings))
+	}
+
+	// boolean 也在受限输出之内。
+	boolean := typed("TrueKeyword", frontend.KindBoolean)
+	call = typed("CallExpression", frontend.KindVoid,
+		propertyAccess("log", ident("console", 0)),
+		boolean,
+	)
+	facts = base()
+	body = node("Block", node("ExpressionStatement", call))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("console.log(boolean) 应通过，实际 %v", codes(findings))
 	}
 
 	// 被本文件的声明遮蔽：console 解析到了某个常量。

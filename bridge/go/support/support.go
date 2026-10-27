@@ -50,3 +50,13 @@ func tynelFormatNumber(v float64) string {
 func tynelPrintFloat64(v float64) {
 	fmt.Fprintln(os.Stdout, tynelFormatNumber(v))
 }
+
+// tynelPrintBool 输出 boolean。拼写固定为 true 与 false，与 Go 的默认格式
+// 一致，但不依赖它——输出的拼写是编译器约定的一部分。
+func tynelPrintBool(v bool) {
+	if v {
+		fmt.Fprintln(os.Stdout, "true")
+		return
+	}
+	fmt.Fprintln(os.Stdout, "false")
+}

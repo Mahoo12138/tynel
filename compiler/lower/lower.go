@@ -95,8 +95,8 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 	if decl.Result == nil {
 		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 缺少返回类型摘要", decl.Name)
 	}
-	if decl.Result.Kind != frontend.KindNumber && decl.Result.Kind != frontend.KindVoid {
-		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 的返回类型是 %s，本阶段只支持 number 与 void", decl.Name, decl.Result.Kind)
+	if decl.Result.Kind != frontend.KindNumber && decl.Result.Kind != frontend.KindBoolean && decl.Result.Kind != frontend.KindVoid {
+		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 的返回类型是 %s，本阶段只支持 number、boolean 与 void", decl.Name, decl.Result.Kind)
 	}
 	fn := &nir.Function{
 		Name:   decl.Name,
@@ -109,10 +109,10 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 		if !ok || param.Kind != frontend.DeclParameter {
 			return nil, l.fail(decl.Start, "lower.unknown-param", "函数 %q 的参数 ID %d 不存在", decl.Name, id)
 		}
-		if param.Type == nil || param.Type.Kind != frontend.KindNumber {
-			return nil, l.fail(param.Start, "lower.bad-type", "参数 %q 不是 number，本阶段只支持 number 参数", param.Name)
+		if param.Type == nil || (param.Type.Kind != frontend.KindNumber && param.Type.Kind != frontend.KindBoolean) {
+			return nil, l.fail(param.Start, "lower.bad-type", "参数 %q 不是 number 或 boolean，本阶段不支持", param.Name)
 		}
-		fn.Params = append(fn.Params, nir.Param{Name: param.Name, Type: nir.TypeNumber, Pos: l.pos(param.Start)})
+		fn.Params = append(fn.Params, nir.Param{Name: param.Name, Type: nirType(param.Type.Kind), Pos: l.pos(param.Start)})
 		sc.params[id] = param.Name
 	}
 	if decl.Body == nil {
@@ -150,7 +150,13 @@ func (l *lowerer) entry() (*nir.Function, error) {
 			if decl.Body == nil {
 				return nil, l.fail(stmt.Start, "lower.missing-value", "常量 %q 没有初始值", decl.Name)
 			}
-			if err := l.numberOperand(decl.Body, "常量 "+decl.Name); err != nil {
+			if decl.Type == nil {
+				return nil, l.fail(stmt.Start, "lower.bad-type", "常量 %q 缺少类型摘要", decl.Name)
+			}
+			if decl.Type.Kind != frontend.KindNumber && decl.Type.Kind != frontend.KindBoolean {
+				return nil, l.fail(stmt.Start, "lower.bad-type", "常量 %q 是 %s，本阶段只支持 number 与 boolean", decl.Name, decl.Type.Kind)
+			}
+			if err := l.typedOperand(decl.Body, decl.Type.Kind, "常量 "+decl.Name+" "); err != nil {
 				return nil, err
 			}
 			value, err := l.expr(decl.Body, sc, 1)
@@ -201,8 +207,8 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
 	switch stmt.Kind {
 	case "ReturnStatement":
 		if len(stmt.Children) == 0 {
-			if l.result == nir.TypeNumber {
-				return nir.Stmt{}, l.fail(stmt.Start, "lower.missing-value", "返回 number 的函数里 return 必须带值")
+			if l.result != nir.TypeVoid {
+				return nir.Stmt{}, l.fail(stmt.Start, "lower.missing-value", "返回 %s 的函数里 return 必须带值", l.result)
 			}
 			return nir.Stmt{Op: nir.OpReturn, Pos: l.pos(stmt.Start)}, nil
 		}
@@ -212,7 +218,7 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
 		if l.result == nir.TypeVoid {
 			return nir.Stmt{}, l.fail(stmt.Start, "lower.void-value", "void 函数的 return 不能带返回值")
 		}
-		if err := l.numberOperand(&stmt.Children[0], "返回值"); err != nil {
+		if err := l.typedOperand(&stmt.Children[0], kindOf(l.result), "返回值"); err != nil {
 			return nir.Stmt{}, err
 		}
 		value, err := l.expr(&stmt.Children[0], sc, 1)
@@ -230,6 +236,9 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
 			return nir.Stmt{}, err
 		}
 		if ok {
+			if arg.Type == nil || (arg.Type.Kind != frontend.KindNumber && arg.Type.Kind != frontend.KindBoolean) {
+				return nir.Stmt{}, l.fail(arg.Start, "lower.bad-type", "console.log 的参数不是 number 或 boolean")
+			}
 			value, err := l.expr(arg, sc, 1)
 			if err != nil {
 				return nir.Stmt{}, err
@@ -279,6 +288,9 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error
 			return nil, l.fail(n.Start, "lower.bad-literal", "数字字面量缺少位模式")
 		}
 		return &nir.Expr{Op: nir.OpNumber, Bits: n.Bits, Pos: l.pos(n.Start)}, nil
+	case "TrueKeyword", "FalseKeyword":
+		v := n.Kind == "TrueKeyword"
+		return &nir.Expr{Op: nir.OpBool, Value: &v, Pos: l.pos(n.Start)}, nil
 	case "BinaryExpression":
 		if !isArithmetic(n.Op) {
 			return nil, l.fail(n.Start, "lower.bad-operator", "运算符 %q 不在 + - * / 之内", n.Op)
@@ -287,7 +299,7 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error
 			return nil, l.fail(n.Start, "lower.bad-arity", "二元运算有 %d 个操作数", len(n.Children))
 		}
 		for i := range n.Children {
-			if err := l.numberOperand(&n.Children[i], "运算符 "+n.Op+" 的操作数"); err != nil {
+			if err := l.typedOperand(&n.Children[i], frontend.KindNumber, "运算符 "+n.Op+" 的操作数"); err != nil {
 				return nil, err
 			}
 		}
@@ -332,18 +344,29 @@ func (l *lowerer) identifier(n *frontend.Node, sc *scope) (*nir.Expr, error) {
 	}
 }
 
-// unary 只接受作用在数字字面量上的一元正负号，并在降低时折成位模式。
+// unary 处理一元运算。`!` 直接降成 not；一元正负号只接受数字字面量，并在
+// 降低时折成位模式。
 //
 // 这样 -0 会被写成 0x8000000000000000，而不是「0 再取负」：后者依赖运行时的
 // 取负语义，而常量折叠在编译期就可能把符号位抹掉。
 func (l *lowerer) unary(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error) {
-	if n.Op != "-" && n.Op != "+" {
-		return nil, l.fail(n.Start, "lower.bad-operator", "一元运算符 %q 不在本阶段子集内", n.Op)
-	}
 	if len(n.Children) != 1 {
 		return nil, l.fail(n.Start, "lower.bad-arity", "一元运算有 %d 个操作数", len(n.Children))
 	}
 	operand := &n.Children[0]
+	if n.Op == "!" {
+		if err := l.typedOperand(operand, frontend.KindBoolean, "! 的操作数"); err != nil {
+			return nil, err
+		}
+		value, err := l.expr(operand, sc, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		return &nir.Expr{Op: nir.OpNot, Operand: value, Pos: l.pos(n.Start)}, nil
+	}
+	if n.Op != "-" && n.Op != "+" {
+		return nil, l.fail(n.Start, "lower.bad-operator", "一元运算符 %q 不在本阶段子集内", n.Op)
+	}
 	if operand.Kind != "NumericLiteral" || operand.Bits == "" {
 		return nil, l.fail(n.Start, "lower.bad-unary", "一元 %q 只支持数字字面量", n.Op)
 	}
@@ -375,7 +398,11 @@ func (l *lowerer) call(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error
 	}
 	expr := &nir.Expr{Op: nir.OpCall, Function: decl.Name, Pos: l.pos(n.Start)}
 	for i := range args {
-		if err := l.numberOperand(&args[i], "调用的实参"); err != nil {
+		param, ok := l.facts.Declaration(decl.Parameters[i])
+		if !ok || param.Type == nil {
+			return nil, l.fail(n.Start, "lower.unknown-param", "函数 %q 的第 %d 个参数没有类型摘要", decl.Name, i+1)
+		}
+		if err := l.typedOperand(&args[i], param.Type.Kind, "调用的实参"); err != nil {
 			return nil, err
 		}
 		arg, err := l.expr(&args[i], sc, depth+1)
@@ -387,15 +414,15 @@ func (l *lowerer) call(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error
 	return expr, nil
 }
 
-// numberOperand 检查一个表达式的类型摘要是不是 number。降低不重新推导类型，
+// typedOperand 检查一个表达式的类型摘要是不是 want。降低不重新推导类型，
 // 但也不能盲信：事实里的类型摘要与结构对不上时，生成的 NIR 会通不过验证，
 // 到那时再报错已经离原因很远了。
-func (l *lowerer) numberOperand(n *frontend.Node, what string) error {
+func (l *lowerer) typedOperand(n *frontend.Node, want frontend.Kind, what string) error {
 	if n == nil || n.Type == nil {
 		return l.fail(nodeStart(n), "lower.bad-type", "%s 缺少类型摘要", what)
 	}
-	if n.Type.Kind != frontend.KindNumber {
-		return l.fail(n.Start, "lower.bad-type", "%s 是 %s，本阶段只支持 number", what, n.Type.Kind)
+	if n.Type.Kind != want {
+		return l.fail(n.Start, "lower.bad-type", "%s是 %s，需要 %s", what, n.Type.Kind, want)
 	}
 	return nil
 }
@@ -426,10 +453,21 @@ func (l *lowerer) fail(offset int, code, format string, args ...any) error {
 }
 
 func nirType(k frontend.Kind) string {
-	if k == frontend.KindVoid {
+	switch k {
+	case frontend.KindVoid:
 		return nir.TypeVoid
+	case frontend.KindBoolean:
+		return nir.TypeBool
 	}
 	return nir.TypeNumber
+}
+
+// kindOf 把 NIR 类型换回事实里的类型类别，用于核对返回值。
+func kindOf(t string) frontend.Kind {
+	if t == nir.TypeBool {
+		return frontend.KindBoolean
+	}
+	return frontend.KindNumber
 }
 
 func isArithmetic(op string) bool {

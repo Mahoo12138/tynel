@@ -25,19 +25,22 @@ import (
 // 不能靠缺省值兼容。
 const SchemaVersion = 1
 
-// 结果类型与参数类型。首版只有 number 和 void。
+// 结果类型与参数类型。首版支持 number、bool 和 void。
 const (
 	TypeNumber = "number"
+	TypeBool   = "bool"
 	TypeVoid   = "void"
 )
 
 // 表达式操作。
 const (
 	OpNumber = "number"
+	OpBool   = "bool"
 	OpParam  = "param"
 	OpLocal  = "local"
 	OpCall   = "call"
 	OpBinary = "binary"
+	OpNot    = "not"
 )
 
 // 语句操作。
@@ -75,7 +78,7 @@ type Function struct {
 	Pos    *Pos    `json:"pos,omitempty"`
 }
 
-// Param 是函数参数。首版只有 number。
+// Param 是函数参数。首版支持 number 与 bool。
 type Param struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
@@ -98,15 +101,20 @@ type Stmt struct {
 }
 
 // Expr 是一个表达式节点。字段按 Op 取用，其余字段必须为空。
+//
+// Value 是 bool 字面量的值，用指针是为了把 false 与「字段缺失」分开：false
+// 是合法值，缺失是格式错误。Operand 是 not 的操作数。
 type Expr struct {
 	Op       string `json:"op"`
 	Bits     string `json:"bits,omitempty"`
+	Value    *bool  `json:"value,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Function string `json:"function,omitempty"`
 	Args     []Expr `json:"args,omitempty"`
 	Operator string `json:"operator,omitempty"`
 	Left     *Expr  `json:"left,omitempty"`
 	Right    *Expr  `json:"right,omitempty"`
+	Operand  *Expr  `json:"operand,omitempty"`
 	Pos      *Pos   `json:"pos,omitempty"`
 }
 
@@ -127,6 +135,11 @@ func Float64(bits string) (float64, error) {
 // Number 构造一个 number 字面量节点。
 func Number(f float64) Expr {
 	return Expr{Op: OpNumber, Bits: BitsOf(f)}
+}
+
+// Bool 构造一个 bool 字面量节点。false 也带一个非空指针，不会被当成缺字段。
+func Bool(v bool) Expr {
+	return Expr{Op: OpBool, Value: &v}
 }
 
 // parseBits 要求 16 位十六进制，允许 0x 前缀，不区分大小写。

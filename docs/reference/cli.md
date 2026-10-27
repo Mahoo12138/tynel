@@ -25,16 +25,16 @@
 | `tynel dump nir <file.ts>` | 输出降低后的 NIR | JSON |
 
 ```zsh
-# 检查、编译、运行。
-./bin/tynel check bridge/tsgo/testdata/add.ts
-./bin/tynel build bridge/tsgo/testdata/add.ts -o out/add
+# 检查、编译、运行；示例在 examples/add.ts。
+./bin/tynel check examples/add.ts
+./bin/tynel build examples/add.ts -o out/add
 ./out/add
-./bin/tynel run bridge/tsgo/testdata/add.ts
+./bin/tynel run examples/add.ts
 
 # 机器可读的输出。
-./bin/tynel check bridge/tsgo/testdata/add.ts --json
-./bin/tynel dump facts bridge/tsgo/testdata/add.ts
-./bin/tynel dump nir bridge/tsgo/testdata/add.ts
+./bin/tynel check examples/add.ts --json
+./bin/tynel dump facts examples/add.ts
+./bin/tynel dump nir examples/add.ts
 ```
 
 ## 开发命令
@@ -92,7 +92,7 @@
 ## build 与构建记录
 
 ```zsh
-./bin/tynel build bridge/tsgo/testdata/add.ts -o out/add
+./bin/tynel build examples/add.ts -o out/add
 ```
 
 `-o` 可以写在源文件前面或后面，也可以用 `-o=out/add`。
@@ -120,7 +120,7 @@
 ## run
 
 ```zsh
-./bin/tynel run bridge/tsgo/testdata/add.ts
+./bin/tynel run examples/add.ts
 # 42
 ```
 

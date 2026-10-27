@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "02.08",
+  "currentImplementationNode": "02.09",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -146,7 +146,7 @@
       "dependsOn": [
         "01"
       ],
-      "status": "active",
+      "status": "completed",
       "plannedNote": "docs/notes/02-source.md",
       "goal": "真实 TypeScript 经过独立检查和降低生成原生程序",
       "gateSubnode": "02.09",
@@ -272,9 +272,13 @@
             "02.08"
           ],
           "planSection": "PLAN.md#task-02-09",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/notes/02-source.md",
+            "docs/validation/02-source.md",
+            "examples/add.ts"
+          ]
         }
       ]
     },

@@ -20,19 +20,19 @@ function scale(a: number): number {
 const doubled: number = scale(answer);
 ```
 
-只看名字，两个 `a` 没法区分；只看位置，`return a + b` 里的 `a` 是「第 166 个字节」，这说的是**某一次出现**，不是**它绑定到哪个声明**。降低阶段要回答的是后者：这个 `a` 该读哪个参数槽。
+只看名字，两个 `a` 没法区分；只看位置，`return a + b` 里的 `a` 是「第 167 个字节」，这说的是**某一次出现**，不是**它绑定到哪个声明**。降低阶段要回答的是后者：这个 `a` 该读哪个参数槽。
 
 事实里两者都记：
 
 ```json
-{ "id": 2, "kind": "function", "name": "add",   "start": 111, "result": {"kind":"number"}, "parameters": [3, 4] }
+{ "id": 2, "kind": "function", "name": "add",   "start": 113, "result": {"kind":"number"}, "parameters": [3, 4] }
 { "id": 3, "kind": "parameter", "name": "a",    "start": 126, "type": {"kind":"number"} }
-{ "id": 4, "kind": "parameter", "name": "b",    "start": 136, "type": {"kind":"number"} }
-{ "id": 5, "kind": "function", "name": "scale", "start": 175, "result": {"kind":"number"}, "parameters": [6] }
+{ "id": 4, "kind": "parameter", "name": "b",    "start": 137, "type": {"kind":"number"} }
+{ "id": 5, "kind": "function", "name": "scale", "start": 249, "result": {"kind":"number"}, "parameters": [6] }
 { "id": 6, "kind": "parameter", "name": "a",    "start": 264, "type": {"kind":"number"} }
 
-{ "name": "a", "start": 166, "length": 2, "target": 3 }
-{ "name": "a", "start": 293, "length": 2, "target": 6 }
+{ "name": "a", "start": 167, "length": 2, "target": 3 }
+{ "name": "a", "start": 294, "length": 2, "target": 6 }
 ```
 
 两个 `a` 的声明 ID 是 3 和 6，两处引用各自指向自己的那个。名字相同、位置不同、ID 不同——这三件事同时成立，事实才够用。
@@ -40,7 +40,7 @@ const doubled: number = scale(answer);
 同一个文件里还有一次前向调用：`add(40, 2)` 出现在 `add` 的声明之前。函数声明会提升，所以这次调用的 `callee` 是 2，指向后面那个声明：
 
 ```json
-{ "start": 99, "length": 11, "callee": 2,
+{ "start": 100, "length": 10, "callee": 2,
   "arguments": [{"kind":"number"}, {"kind":"number"}],
   "result": {"kind":"number"} }
 ```
@@ -59,13 +59,13 @@ const doubled: number = scale(answer);
 | --- | --- |
 | `declarations` | 顶层函数、它们的参数、顶层 const |
 | `references` | 函数体与初始化表达式里的每一次名称出现，带解析到的声明 ID |
-| `calls` | 调用位置、被调用者 ID、实参类型、结果类型 |
+| `calls` | 函数体与初始化表达式里的调用位置、被调用者 ID、实参类型、结果类型 |
 | `expressions` | 数字字面量、二元运算、调用和标识符，各带类型摘要 |
 | `body` | 函数体或初始化表达式的语法骨架（见下） |
 
 几个字段的语义要说清楚：
 
-- **`start` / `length` 是声明或表达式的字节区间**。函数声明覆盖整个 `function … }`；参数覆盖 `a: number`（含类型注解）；引用覆盖标识符本身（`a`，长度 2）。
+- **`start` / `length` 是声明或表达式的字节区间**。函数声明覆盖整个 `function … }`；参数覆盖 `a: number`（含类型注解）；引用覆盖标识符本身（`a`，长度 2）。`start` 是第一个有效记号的位置，不含它前面的空白和注释——报错要指向 `if`，不能指到上一行末尾的换行符。
 - **`target` 和 `callee` 为 0 表示没有解析到本文件内的声明**，例如 `console`。它们不是错误。
 - **类型注解里的名字不算引用**。`a: number` 的 `number` 是类型名，不是变量，遍历时不进类型节点。
 
@@ -74,13 +74,13 @@ const doubled: number = scale(answer);
 每个函数和 const 还带一棵 `body`：函数体是 `Block`，const 是初始化表达式。节点形状固定：
 
 ```json
-{ "kind": "ReturnStatement", "start": 126, "length": 16,
+{ "kind": "ReturnStatement", "start": 160, "length": 13,
   "children": [
-    { "kind": "BinaryExpression", "op": "+", "start": 133, "length": 9,
+    { "kind": "BinaryExpression", "op": "+", "start": 167, "length": 5,
       "type": {"kind":"number"},
       "children": [
-        { "kind": "Identifier", "name": "a", "target": 3, "start": 133, "length": 1 },
-        { "kind": "Identifier", "name": "b", "target": 4, "start": 137, "length": 1 }
+        { "kind": "Identifier", "name": "a", "target": 3, "start": 167, "length": 1 },
+        { "kind": "Identifier", "name": "b", "target": 4, "start": 171, "length": 1 }
       ] }
   ] }
 ```

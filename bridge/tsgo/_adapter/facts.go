@@ -15,6 +15,7 @@ import (
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/checker"
+	"github.com/microsoft/typescript-go/internal/scanner"
 )
 
 // factType 是类型摘要。只记类别，不记人类可读的类型字符串：调用方需要判断
@@ -102,6 +103,7 @@ func (s *Session) Facts() ([]byte, error) {
 	defer release()
 
 	b := &factBuilder{
+		file:          s.file,
 		checker:       chk,
 		ids:           make(map[*ast.Symbol]int),
 		declNameNodes: make(map[*ast.Node]bool),
@@ -120,11 +122,21 @@ func (s *Session) Facts() ([]byte, error) {
 
 type factBuilder struct {
 	err           error
+	file          *ast.SourceFile
 	checker       *checker.Checker
 	ids           map[*ast.Symbol]int
 	declNameNodes map[*ast.Node]bool
 	nextID        int
 	payload       factsPayload
+}
+
+// startOf 返回节点第一个有效记号的位置，跳过前导空白与注释。
+//
+// 上游的 Node.Pos() 是「完整起点」，包含节点之前的空白和注释。把它直接当成
+// 源码位置，报错会指到上一行末尾的换行符，函数声明也会把头顶的注释算进自己
+// 的范围。位置要回答「哪个字符」，所以用记号的起点。
+func (b *factBuilder) startOf(node *ast.Node) int {
+	return scanner.GetTokenPosOfNode(node, b.file, false)
 }
 
 // declare 给本文件里的声明分配 ID。同一个符号在多次引用中拿到同一个 ID，
@@ -186,16 +198,16 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 					// 顶层 const 在模块体里占一个位置，降低阶段按顺序求值。
 					module.Children = append(module.Children, factNode{
 						Kind:   "Const",
-						Start:  decl.Pos(),
-						Length: decl.End() - decl.Pos(),
+						Start:  b.startOf(decl),
+						Length: decl.End() - b.startOf(decl),
 						Decl:   b.payload.Declarations[item.index].ID,
 					})
 				} else {
 					// let/var 不在子集内，保留原种类让能力检查拒绝。
 					module.Children = append(module.Children, factNode{
 						Kind:   "VariableStatement",
-						Start:  stmt.Pos(),
-						Length: stmt.End() - stmt.Pos(),
+						Start:  b.startOf(stmt),
+						Length: stmt.End() - b.startOf(stmt),
 					})
 				}
 			}
@@ -230,8 +242,8 @@ func (b *factBuilder) declareFunction(node *ast.Node) pending {
 		ID:     b.declare(b.checker.GetSymbolAtLocation(name)),
 		Kind:   "function",
 		Name:   name.Text(),
-		Start:  node.Pos(),
-		Length: node.End() - node.Pos(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
 	}
 	b.declNameNodes[name] = true
 
@@ -254,8 +266,8 @@ func (b *factBuilder) declareFunction(node *ast.Node) pending {
 			ID:     id,
 			Kind:   "parameter",
 			Name:   paramName.Text(),
-			Start:  param.Pos(),
-			Length: param.End() - param.Pos(),
+			Start:  b.startOf(param),
+			Length: param.End() - b.startOf(param),
 			Type:   &typ,
 		})
 		b.declNameNodes[paramName] = true
@@ -283,8 +295,8 @@ func (b *factBuilder) declareVariable(node *ast.Node) pending {
 		ID:     b.declare(b.checker.GetSymbolAtLocation(name)),
 		Kind:   "const",
 		Name:   name.Text(),
-		Start:  node.Pos(),
-		Length: node.End() - node.Pos(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
 		Type:   &typ,
 	})
 	b.declNameNodes[name] = true
@@ -328,8 +340,8 @@ func (b *factBuilder) walk(node *ast.Node) {
 func (b *factBuilder) reference(node *ast.Node) {
 	b.payload.References = append(b.payload.References, factReference{
 		Name:   node.Text(),
-		Start:  node.Pos(),
-		Length: node.End() - node.Pos(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
 		Target: b.lookup(b.checker.GetSymbolAtLocation(node)),
 	})
 }
@@ -341,8 +353,8 @@ func (b *factBuilder) call(node *ast.Node) {
 		callee = b.lookup(b.checker.GetSymbolAtLocation(call.Expression))
 	}
 	item := factCall{
-		Start:  node.Pos(),
-		Length: node.End() - node.Pos(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
 		Callee: callee,
 		Result: b.typeOf(b.checker.GetTypeAtLocation(node)),
 	}
@@ -357,8 +369,8 @@ func (b *factBuilder) call(node *ast.Node) {
 
 func (b *factBuilder) expression(node *ast.Node, kind string) {
 	b.payload.Expressions = append(b.payload.Expressions, factExpression{
-		Start:  node.Pos(),
-		Length: node.End() - node.Pos(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
 		Kind:   kind,
 		Type:   b.typeOf(b.checker.GetTypeAtLocation(node)),
 	})
@@ -397,8 +409,8 @@ func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
 	}
 	out := &factNode{
 		Kind:   kindName(node.Kind),
-		Start:  node.Pos(),
-		Length: node.End() - node.Pos(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
 	}
 	if ast.IsExpression(node) {
 		typ := b.typeOf(b.checker.GetTypeAtLocation(node))

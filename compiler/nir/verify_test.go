@@ -176,6 +176,81 @@ func TestVerifyIfScopes(t *testing.T) {
 	}
 }
 
+// TestVerifyReturnPaths 覆盖完整返回路径：两臂都返回、提前返回后补 return、
+// 嵌套分支、void 正常结束，以及缺一臂时按 if 的位置报错。
+func TestVerifyReturnPaths(t *testing.T) {
+	both := Function{
+		Name:   "both",
+		Result: TypeNumber,
+		Body: []Stmt{
+			ifStmt(boolLit(true), []Stmt{ret(num(1))}, []Stmt{ret(num(2))}),
+		},
+	}
+	early := Function{
+		Name:   "early",
+		Result: TypeNumber,
+		Body: []Stmt{
+			ifStmt(boolLit(true), []Stmt{ret(num(1))}, nil),
+			ret(num(2)),
+		},
+	}
+	nested := Function{
+		Name:   "nested",
+		Result: TypeNumber,
+		Body: []Stmt{
+			ifStmt(boolLit(true),
+				[]Stmt{ifStmt(boolLit(false), []Stmt{ret(num(1))}, []Stmt{ret(num(2))})},
+				[]Stmt{ret(num(3))},
+			),
+		},
+	}
+	voidIf := Function{
+		Name:   "voidIf",
+		Result: TypeVoid,
+		Body: []Stmt{
+			ifStmt(boolLit(true), []Stmt{printStmt(num(1))}, nil),
+		},
+	}
+	dead := Function{
+		Name:   "dead",
+		Result: TypeNumber,
+		Body: []Stmt{
+			ret(num(1)),
+			letStmt("unused", num(2)),
+		},
+	}
+	m := module("main", both, early, nested, voidIf, dead,
+		mainWith(
+			printStmt(call("both")),
+			printStmt(call("early")),
+			printStmt(call("nested")),
+			discard(call("voidIf")),
+			printStmt(call("dead")),
+			retVoid(),
+		),
+	)
+	if err := Verify(m); err != nil {
+		t.Fatalf("完整返回路径应通过验证：%v", err)
+	}
+
+	// 缺 else：报在 if 上。
+	pos := &Pos{File: "f.ts", Line: 7, Column: 3}
+	cond := boolLit(true)
+	missing := Stmt{Op: OpIf, Cond: &cond, Then: []Stmt{ret(num(1))}, Pos: pos}
+	f := Function{Name: "missing", Result: TypeNumber, Body: []Stmt{missing}}
+	err := Verify(module("main", f, mainWith(retVoid())))
+	if err == nil {
+		t.Fatal("缺返回路径应被拒绝")
+	}
+	var d *diagnostic.Diagnostic
+	if !errors.As(err, &d) || d.Code != "nir.missing-return" {
+		t.Fatalf("应报 nir.missing-return，实际 %v", err)
+	}
+	if d.Line != 7 || d.Column != 3 {
+		t.Fatalf("错误位置应指向 if（7:3），实际 %d:%d", d.Line, d.Column)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))

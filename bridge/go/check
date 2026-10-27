@@ -54,7 +54,14 @@ else
   fail "if 分支输出 \"${out-}\"，期望 1 和 2"
 fi
 
-# 5. 坏 NIR：调用不存在的函数，必须在编译期被拒绝。
+# 5. 返回路径：两臂都返回，return 之后的不可达打印不生成。
+if out=$("$ROOT/bridge/go/run" "$ROOT/bridge/go/testdata/returns.nir.json" "$OUT/returns" 2>/dev/null) && [[ "$out" == $'1\n2\n1' ]]; then
+  pass "完整返回路径与不可达语句"
+else
+  fail "返回路径输出 \"${out-}\"，期望 1、2、1"
+fi
+
+# 6. 坏 NIR：调用不存在的函数，必须在编译期被拒绝。
 if msg=$("$ROOT/bridge/go/run" "$ROOT/bridge/go/testdata/bad-call.nir.json" "$OUT/bad" 2>&1); then
   fail "坏 NIR 竟然构建成功"
 elif [[ "$msg" == *"tynel bridge"*"不存在的函数"* ]]; then
@@ -63,14 +70,14 @@ else
   fail "坏 NIR 的错误信息不符：$msg"
 fi
 
-# 6. 普通构建：不设置 TYNEL_NIR 时，替换编译器不改变行为。
+# 7. 普通构建：不设置 TYNEL_NIR 时，替换编译器不改变行为。
 if out=$(TYNEL_COMPILE="$COMPILE" "$SDK/bin/go" run -toolexec="$ROOT/bridge/go/toolexec" "$ROOT/bridge/go/testdata/hello" 2>&1) && [[ "$out" == "hello" ]]; then
   pass "普通构建不受影响"
 else
   fail "普通构建输出 \"${out-}\""
 fi
 
-# 7. 支持签名不对：缺少 tynelPrintFloat64 时必须拒绝。
+# 8. 支持签名不对：缺少 tynelPrintFloat64 时必须拒绝。
 if msg=$(TYNEL_NIR="$ROOT/examples/ir/add.nir.json" TYNEL_COMPILE="$COMPILE" "$SDK/bin/go" build \
   -toolexec="$ROOT/bridge/go/toolexec" -tags "tynel_missing_$$" -o "$OUT/missing" \
   "$ROOT/bridge/go/testdata/support-missing" 2>&1); then

@@ -79,11 +79,14 @@ func (c *checker) function(f *Function) error {
 		return err
 	}
 
-	// 03.03 仍要求有值函数的最后一条语句是 return；完整路径分析在 03.04。
-	if f.Result != TypeVoid {
-		if len(f.Body) == 0 || f.Body[len(f.Body)-1].Op != OpReturn {
-			return failAt("nir.missing-return", f.Pos, "函数 %q 返回 %s，但函数体没有以 return 结束", f.Name, f.Result)
+	// 有值函数必须覆盖所有返回路径；只有一条 return 不够，if 的两臂都结束
+	// 才算完整。完整规则见 returns.go。
+	if f.Result != TypeVoid && !BlockReturns(f.Body) {
+		pos := FirstMissingReturn(f.Body)
+		if pos == nil {
+			pos = f.Pos
 		}
+		return failAt("nir.missing-return", pos, "函数 %q 返回 %s，但有路径没有 return", f.Name, f.Result)
 	}
 	return nil
 }

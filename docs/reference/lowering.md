@@ -137,6 +137,14 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 
 独立语句块 `{ ... }`（不挂在 `if` 上）目前按 `lower.unsupported-statement` 拒绝：NIR 没有裸块语句，扁平化会丢掉作用域。嵌套块通过 `if` 的分支表达。
 
+## 返回路径
+
+有值函数降低后要过 `nir.BlockReturns`：一条 `return` 直接结束；`if` 只有两臂都存在且都结束时才算覆盖路径。缺路径时按 `lower.missing-return` 拒绝，位置来自 NIR 里那个 `if` 节点，而不是整个函数。
+
+`return` 之后的语句仍然降低，NIR 保留它们，验证器也照样检查。bridge 在生成阶段遇到结束语句就停止，Go 编译器因此不会看到不可达代码。
+
+`void` 函数正常结束：如果分支已经覆盖所有路径，不再补 `return`；否则补一条空 `return`，表示函数结束。
+
 ## 降低阶段拒绝什么
 
 降低不重复做类型检查，但它不盲信事实。下面这些情况会在降低时报错，并且不返回模块：
@@ -154,7 +162,7 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 | `lower.function-value` | 把函数当值使用 |
 | `lower.unknown-callee` | 调用目标不是本文件里的函数 |
 | `lower.entry-conflict` | 用户函数占用了 `main` |
-| `lower.missing-return` | 返回 `number` 或 `boolean` 的函数没有以 `return` 结束 |
+| `lower.missing-return` | 返回 `number` 或 `boolean` 的函数有路径没有 `return` |
 | `lower.missing-value` | 返回 `number` 或 `boolean` 的函数里 `return` 不带值，或局部值缺少初始值 |
 | `lower.void-value` | `void` 函数的 `return` 带返回值 |
 | `lower.unsupported-statement` | 函数体或模块体里出现不支持的语句（包括独立语句块） |

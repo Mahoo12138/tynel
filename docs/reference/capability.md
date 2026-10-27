@@ -38,15 +38,15 @@ function identity(value: any): any {
 能力检查遍历事实里的**每一个**函数体和常量初始化表达式，包括没有被调用的函数。它不做可达性分析：
 
 ```typescript
-function neverCalled(): number {
-  if (true) {
-    return 1;
+function neverCalled(n: number): number {
+  while (n < 3) {
+    console.log(n);
   }
-  return 0;
+  return n;
 }
 ```
 
-这个函数没人调用，`if` 照样被拒绝。理由是「今天不可达」和「以后也不会被调用」是两件事，而按可达性跳过检查，等到有人接上调用时才会在更靠后的阶段炸掉——那时离原因已经很远了。
+这个函数没人调用，`while` 照样被拒绝。`return` 之后的不可达语句也一样：它们不会执行，但能力检查仍然遍历。理由是「今天不可达」和「以后也不会被调用」是两件事，而按可达性跳过检查，等到有人接上调用时才会在更靠后的阶段炸掉——那时离原因已经很远了。
 
 ## 当前支持什么
 

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "sign",
+      "params": [
+        {"name": "flag", "type": "bool"}
+      ],
+      "result": "number",
+      "body": [
+        {
+          "op": "if",
+          "cond": {"op": "param", "name": "flag"},
+          "then": [{"op": "return", "value": {"op": "number", "bits": "0x3ff0000000000000"}}],
+          "else": [{"op": "return", "value": {"op": "number", "bits": "0x4000000000000000"}}]
+        }
+      ]
+    },
+    {
+      "name": "early",
+      "params": null,
+      "result": "number",
+      "body": [
+        {"op": "return", "value": {"op": "number", "bits": "0x3ff0000000000000"}},
+        {"op": "print", "value": {"op": "number", "bits": "0x4000000000000000"}}
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "print", "value": {"op": "call", "function": "sign", "args": [{"op": "bool", "value": true}]}},
+        {"op": "print", "value": {"op": "call", "function": "sign", "args": [{"op": "bool", "value": false}]}},
+        {"op": "print", "value": {"op": "call", "function": "early", "args": []}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

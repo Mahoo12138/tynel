@@ -113,6 +113,10 @@ func lowerFacts(t *testing.T, facts *frontend.Facts) *nir.Module {
 	t.Helper()
 	module, err := Lower(snapshot(t), facts)
 	if err != nil {
+		var d *diagnostic.Diagnostic
+		if errors.As(err, &d) {
+			t.Fatalf("降低失败：%v（详情：%s）", err, d.Detail)
+		}
 		t.Fatalf("降低失败：%v", err)
 	}
 	return module
@@ -496,6 +500,91 @@ func TestLowersComparisonProgram(t *testing.T) {
 	}
 	if got := main.Body[2].Value; got == nil || got.Op != nir.OpCompare || got.Operator != "!==" {
 		t.Fatalf("第三条应是 boolean 的严格不等：%+v", got)
+	}
+}
+
+// returnFacts 对应：
+//
+//	function pick(flag: boolean): number {
+//	  if (flag) { return 1; } else { return 2; }
+//	}
+//	console.log(pick(true));
+func returnFacts() *frontend.Facts {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	body := node("Block", node("IfStatement", boolIdent("flag", 2),
+		node("Block", node("ReturnStatement", literal("0x3ff0000000000000"))),
+		node("Block", node("ReturnStatement", literal("0x4000000000000000"))),
+	))
+	call := typed("CallExpression", frontend.KindNumber, ident("pick", 1), boolLiteral(true))
+	module := node("Block", node("ExpressionStatement", consoleLog(call)))
+	return &frontend.Facts{
+		SchemaVersion: 1,
+		Session:       "s",
+		File:          "/tmp/t.ts",
+		Module:        &module,
+		Declarations: []frontend.Declaration{
+			{ID: 1, Kind: frontend.DeclFunction, Name: "pick", Start: 0, Length: 20, Result: &number, Parameters: []int{2}, Body: &body},
+			{ID: 2, Kind: frontend.DeclParameter, Name: "flag", Start: 4, Length: 4, Type: &boolean},
+		},
+	}
+}
+
+func TestLowersCompleteReturnPaths(t *testing.T) {
+	module := lowerFacts(t, returnFacts())
+	pick := module.Functions[0]
+	if len(pick.Body) != 1 || pick.Body[0].Op != nir.OpIf {
+		t.Fatalf("pick 的函数体应只有一条 if：%+v", pick.Body)
+	}
+	if !nir.BlockReturns(pick.Body) {
+		t.Fatal("两臂都返回的函数体应覆盖所有路径")
+	}
+
+	// 缺 else：降低按 if 的位置报 lower.missing-return。
+	facts := returnFacts()
+	ifNode := &facts.Declarations[0].Body.Children[0]
+	ifNode.Children = ifNode.Children[:2]
+	bad, err := Lower(snapshot(t), facts)
+	if err == nil || bad != nil {
+		t.Fatal("缺 else 的有值函数应被拒绝")
+	}
+	var d *diagnostic.Diagnostic
+	if !errors.As(err, &d) || d.Code != "lower.missing-return" {
+		t.Fatalf("应报 lower.missing-return，实际 %v", err)
+	}
+	if d.Line != 1 || d.Column != 11 {
+		t.Fatalf("错误位置应指向 if（1:11），实际 %d:%d", d.Line, d.Column)
+	}
+
+	// 单臂提前返回，后面补一个 return。
+	facts = returnFacts()
+	facts.Declarations[0].Body.Children = []frontend.Node{
+		node("IfStatement", boolIdent("flag", 2),
+			node("Block", node("ReturnStatement", literal("0x3ff0000000000000"))),
+		),
+		node("ReturnStatement", literal("0x4000000000000000")),
+	}
+	module = lowerFacts(t, facts)
+	if !nir.BlockReturns(module.Functions[0].Body) {
+		t.Fatal("提前返回后补 return 应覆盖所有路径")
+	}
+}
+
+func TestLowersVoidImplicitReturn(t *testing.T) {
+	facts := returnFacts()
+	voidType := frontend.Type{Kind: frontend.KindVoid}
+	facts.Declarations[0].Result = &voidType
+	facts.Module = nil
+	// void 函数只留 if 的单臂，走到末尾是正常结束。
+	facts.Declarations[0].Body.Children = []frontend.Node{
+		node("IfStatement", boolIdent("flag", 2),
+			node("Block", node("ExpressionStatement", consoleLog(literal("0x3ff0000000000000")))),
+		),
+	}
+	module := lowerFacts(t, facts)
+	body := module.Functions[0].Body
+	if len(body) != 2 || body[1].Op != nir.OpReturn {
+		t.Fatalf("void 函数末尾应补一条 return：%+v", body)
 	}
 }
 

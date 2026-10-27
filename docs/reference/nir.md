@@ -123,7 +123,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | 调用 | 目标函数必须存在；实参个数等于形参个数；每个实参类型等于对应形参类型 |
 | 类型 | 字面量是 `number` 或 `bool`；参数取它声明的类型；四则运算的结果是 `number`；`compare` 的结果是 `bool`，输入按运算符分组；`not` 的操作数与结果都是 `bool`；调用表达式的类型是被调函数的返回类型 |
 | 分支 | `if` 的 `cond` 必须是 `bool`；`then` 与 `else` 各自在子作用域里检查 |
-| 返回值 | 返回 `number` 或 `bool` 的函数必须以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值 |
+| 返回值 | 返回 `number` 或 `bool` 的函数必须在每条路径上以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值。`if` 只有两臂都存在且都结束时才算覆盖路径 |
 | 输出 | `print` 只接受 `number` 或 `bool`，`void` 调用不能作为值使用 |
 | 丢弃 | `discard` 的表达式必须成立，结果类型不限 |
 
@@ -164,7 +164,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.condition-type` | 语义 | `if` 的条件不是 `bool` |
 | `nir.unknown-local` | 语义 | 引用了尚未定义的局部值，或局部值不在当前块及祖先块里 |
 | `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number`、有序比较收到 `bool`、严格相等两侧类型不同 |
-| `nir.missing-return` | 语义 | 返回 `number` 或 `bool` 的函数没有以 `return` 结束 |
+| `nir.missing-return` | 语义 | 返回 `number` 或 `bool` 的函数有路径没有 `return` |
 | `nir.io` | 环境 | 打开、写入或改名失败 |
 
 带源码位置的节点出错时，诊断会附上 `文件:行:列`。

@@ -259,8 +259,34 @@ func (b *bodyBuilder) stmts(stmts []stmt, sc *localScope) ([]ir.Node, error) {
 		if n != nil {
 			body = append(body, n)
 		}
+		// return 之后的语句不可达。Go 编译器不接受不可达语句，NIR 保留它们
+		// 是为了让验证器照样检查类型；生成阶段在这里停住。
+		if stmtReturns(s) {
+			break
+		}
 	}
 	return body, nil
+}
+
+// stmtReturns 与 nir.BlockReturns 同构：return 直接结束，if 需要两臂都结束。
+func stmtReturns(s stmt) bool {
+	switch s.Op {
+	case "return":
+		return true
+	case "if":
+		return len(s.Then) > 0 && len(s.Else) > 0 &&
+			stmtsReturn(s.Then) && stmtsReturn(s.Else)
+	}
+	return false
+}
+
+func stmtsReturn(stmts []stmt) bool {
+	for _, s := range stmts {
+		if stmtReturns(s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {

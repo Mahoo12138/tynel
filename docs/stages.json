@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "03.03",
+  "currentImplementationNode": "03.04",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -347,9 +347,13 @@
             "03.03"
           ],
           "planSection": "PLAN.md#task-03-04",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/returns.md",
+            "docs/reference/nir.md",
+            "docs/validation/03-04-returns.md"
+          ]
         },
         {
           "id": "03.05",

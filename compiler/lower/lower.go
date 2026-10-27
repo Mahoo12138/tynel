@@ -220,13 +220,16 @@ func (l *lowerer) block(block *frontend.Node, sc *scope, result string) ([]nir.S
 		return nil, err
 	}
 	if result == nir.TypeVoid {
-		if len(body) == 0 || body[len(body)-1].Op != nir.OpReturn {
+		// void 函数正常结束等价于一条空 return；如果分支已经覆盖所有路径，
+		// 不再补一条不可达的 return。
+		if !nir.BlockReturns(body) {
 			body = append(body, nir.Stmt{Op: nir.OpReturn})
 		}
 		return body, nil
 	}
-	if len(body) == 0 || body[len(body)-1].Op != nir.OpReturn {
-		return nil, l.fail(block.Start, "lower.missing-return", "返回 %s 的函数没有以 return 结束", result)
+	if !nir.BlockReturns(body) {
+		pos := nir.FirstMissingReturn(body)
+		return nil, l.failNir(pos, block.Start, "lower.missing-return", "返回 %s 的函数有路径没有 return", result)
 	}
 	return body, nil
 }
@@ -638,6 +641,15 @@ func (l *lowerer) fail(offset int, code, format string, args ...any) error {
 		}
 	}
 	return d
+}
+
+// failNir 用 NIR 位置报错。返回路径的缺口来自 NIR 语句，位置已经由降低填好；
+// 没有位置时退回源码偏移。
+func (l *lowerer) failNir(pos *nir.Pos, offset int, code, format string, args ...any) error {
+	if pos != nil {
+		return diagnostic.New(diagnostic.Internal, code, format, args...).At(pos.File, pos.Line, pos.Column)
+	}
+	return l.fail(offset, code, format, args...)
 }
 
 func nirType(k frontend.Kind) string {

@@ -38,7 +38,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 }
 ```
 
-`result` 只接受 `number` 或 `void`；`params[].type` 首版只接受 `number`。`pos` 可以省略，手写 NIR 时通常不写；前端产出时填写，用于把后端的错误指回源码。
+`result` 只接受 `number` 或 `void`；`params[].type` 首版只接受 `number`。`pos` 可以省略，手写 NIR 时通常不写；前端产出时填写，用于把后端的错误指回源码。参数表为空时，Go 的编码会写成 `null`；读入时 `null` 与 `[]` 等价，都表示没有参数。
 
 ## 语句
 

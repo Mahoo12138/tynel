@@ -180,13 +180,15 @@ NIR 里是上一章那种结构，`add` 和 `main` 两个函数（同样省略�
   "body": [{"op":"return","value":{"op":"binary","operator":"+",
             "left":{"op":"param","name":"a"},"right":{"op":"param","name":"b"}}}] }
 
-{ "name": "main", "params": [], "result": "void",
+{ "name": "main", "params": null, "result": "void",
   "body": [
     {"op":"print","value":{"op":"call","function":"add","args":[
       {"op":"number","bits":"0x4044000000000000"},
       {"op":"number","bits":"0x4000000000000000"}]}},
     {"op":"return"} ] }
 ```
+
+`main` 没有参数，Go 把空切片写成 `null`；读入时它与 `[]` 等价。
 
 两站之间丢掉的东西，正好是后端不需要的东西：
 

@@ -86,7 +86,7 @@ const doubled: number = scale(answer);
 ```
 
 - `kind` 是上游的语法种类名，去掉 `Kind` 前缀。不认识的种类由能力检查统一拒绝。
-- `op` 只出现在二元与一元运算上，是符号文本（`+`、`-`），不是 token 名。
+- `op` 只出现在二元与一元运算上，是符号文本（`+`、`-`、`<`、`===`），不是 token 名。
 - `name` 与 `target` 只出现在标识符和属性访问上；属性访问的 `name` 是属性名，`children` 只有对象那一侧。
 - 树里只有语句、表达式和变量声明。类型节点（`a: number` 的 `number`）、修饰符、名字令牌都不进树——否则类型名会被当成变量引用。
 - `true` 与 `false` 是 `TrueKeyword` / `FalseKeyword` 节点，类型摘要为 `boolean`。它们没有额外字段，种类本身就区分两个值。

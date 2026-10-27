@@ -43,6 +43,15 @@ var binaryOps = map[string]ir.Op{
 	"/": ir.ODIV,
 }
 
+var compareOps = map[string]ir.Op{
+	"<":   ir.OLT,
+	"<=":  ir.OLE,
+	">":   ir.OGT,
+	">=":  ir.OGE,
+	"===": ir.OEQ,
+	"!==": ir.ONE,
+}
+
 // Inject 在包加载完成后把 NIR 中的函数加入编译目标。没有设置 TYNEL_NIR 或
 // 当前不是 main 包时什么也不做，普通构建因此不受影响。
 func tynelInject(target *ir.Package) {
@@ -336,6 +345,20 @@ func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir
 			return nil, err
 		}
 		return ir.NewBinaryExpr(pos, op, x, y), nil
+	case "compare":
+		op, ok := compareOps[e.Operator]
+		if !ok {
+			return nil, fmt.Errorf("不支持的比较运算符 %q", e.Operator)
+		}
+		x, err := buildExpr(e.Left, params, locals, funcs, bitsHelper, pos)
+		if err != nil {
+			return nil, err
+		}
+		y, err := buildExpr(e.Right, params, locals, funcs, bitsHelper, pos)
+		if err != nil {
+			return nil, err
+		}
+		return ir.NewBinaryExpr(pos, op, x, y), nil
 	default:
 		return nil, fmt.Errorf("不支持的表达式 op %q", e.Op)
 	}
@@ -348,7 +371,7 @@ func exprGoType(e *expr, params, locals map[string]*ir.Name, funcs map[string]*i
 	switch e.Op {
 	case "number", "binary":
 		return types.Types[types.TFLOAT64], nil
-	case "bool", "not":
+	case "bool", "not", "compare":
 		return types.Types[types.TBOOL], nil
 	case "param":
 		n, ok := params[e.Name]

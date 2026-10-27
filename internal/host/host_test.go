@@ -50,6 +50,7 @@ func newRoot(t *testing.T) string {
 	write("bridge/tsgo/consumer/go.mod", "module example\n")
 	write("bridge/tsgo/consumer/go.sum", "")
 	write("bridge/tsgo/_adapter/adapter.go", "package tyneladapter\n")
+	write("compiler/capability/capability.go", "package capability\n")
 	write(".work/frontend/typescript-go/tyneladapter/adapter.go", "package tyneladapter\n")
 
 	sdkDir := filepath.Join(root, ".work/toolchain/go1.27.3-sdk-darwin-arm64")
@@ -132,6 +133,23 @@ func TestEnsureRebuildsWhenSourceChanges(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "前端宿主构建失败") {
 		t.Errorf("错误应说明是宿主构建失败：%v", err)
+	}
+}
+
+func TestEnsureRebuildsWhenCompilerChanges(t *testing.T) {
+	root := newRoot(t)
+	stampBinary(t, root)
+	path := filepath.Join(root, "compiler", "capability", "capability.go")
+	if err := os.WriteFile(path, []byte("package capability\n// changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{exit: 1, stderr: "cannot find module"}
+	_, err := Ensure(root, runner, nil)
+	if exitOf(err) != diagnostic.ExitEnvironment {
+		t.Fatalf("重建失败应为环境缺失，实际 %d（%v）", exitOf(err), err)
+	}
+	if runner.calls != 1 {
+		t.Errorf("compiler 源码变化后应重建一次，实际 %d 次", runner.calls)
 	}
 }
 

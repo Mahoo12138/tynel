@@ -64,12 +64,15 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `param` | `name` | 引用当前函数的参数 |
 | `local` | `name` | 引用前面 `let` 定义的局部值 |
 | `call` | `function`，`args` 可选 | 直接调用具名函数 |
-| `binary` | `operator`、`left`、`right` | 二元运算，运算符限 `+`、`-`、`*`、`/` |
+| `binary` | `operator`、`left`、`right` | 算术运算，运算符限 `+`、`-`、`*`、`/`，结果是 `number` |
+| `compare` | `operator`、`left`、`right` | 比较运算，运算符限 `<`、`<=`、`>`、`>=`、`===`、`!==`，结果是 `bool` |
 | `not` | `operand` | 布尔取反，操作数必须是 `bool` |
 
 任何表达式都可以带 `pos`。不属于该 `op` 的字段一律拒绝。
 
 `bool` 的 `value` 用指针保存，所以 `false` 与「字段缺失」是两种不同的输入：前者是合法值，后者按 `nir.missing` 拒绝。JSON 里写成 `{"op":"bool","value":false}`。
+
+`compare` 的输入类型按运算符分两组：`<`、`<=`、`>`、`>=` 要求两个 `number`；`===`、`!==` 要求两侧同为 `number` 或同为 `bool`。宽松相等 `==`、`!=` 不是 NIR 运算符，混入文件按 `nir.bad-op` 拒绝。浮点比较的具体结果见[比较语义](comparison.md)。
 
 ## 数字为什么存位模式
 
@@ -103,7 +106,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | 声明唯一 | 函数名不得重复；同一函数内参数名不得重复 |
 | 参数引用 | `param` 的名字必须是当前函数的参数 |
 | 调用 | 目标函数必须存在；实参个数等于形参个数；每个实参类型等于对应形参类型 |
-| 类型 | 字面量是 `number` 或 `bool`；参数取它声明的类型；四则运算的结果是 `number`；`not` 的操作数与结果都是 `bool`；调用表达式的类型是被调函数的返回类型 |
+| 类型 | 字面量是 `number` 或 `bool`；参数取它声明的类型；四则运算的结果是 `number`；`compare` 的结果是 `bool`，输入按运算符分组；`not` 的操作数与结果都是 `bool`；调用表达式的类型是被调函数的返回类型 |
 | 返回值 | 返回 `number` 或 `bool` 的函数必须以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值 |
 | 输出 | `print` 只接受 `number` 或 `bool`，`void` 调用不能作为值使用 |
 | 丢弃 | `discard` 的表达式必须成立，结果类型不限 |
@@ -143,7 +146,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.print-type` | 语义 | `print` 的参数不是 `number` 或 `bool` |
 | `nir.local-type` | 语义 | `let` 的值不是 `number` 或 `bool` |
 | `nir.unknown-local` | 语义 | 引用了尚未定义的局部值 |
-| `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number` |
+| `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number`、有序比较收到 `bool`、严格相等两侧类型不同 |
 | `nir.missing-return` | 语义 | 返回 `number` 或 `bool` 的函数没有以 `return` 结束 |
 | `nir.io` | 环境 | 打开、写入或改名失败 |
 

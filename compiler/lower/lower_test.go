@@ -70,6 +70,12 @@ func binary(op string, left, right frontend.Node) frontend.Node {
 	return n
 }
 
+func compareNode(op string, left, right frontend.Node) frontend.Node {
+	n := typed("BinaryExpression", frontend.KindBoolean, left, right)
+	n.Op = op
+	return n
+}
+
 func consoleLog(arg frontend.Node) frontend.Node {
 	access := typed("PropertyAccessExpression", frontend.KindVoid, ident("console", 0))
 	access.Name = "log"
@@ -435,6 +441,107 @@ func TestRejectsBooleanMismatches(t *testing.T) {
 			}
 			if d.Category != diagnostic.Internal {
 				t.Fatalf("降低失败属于内部故障，实际 %v", d.Category)
+			}
+		})
+	}
+}
+
+// compareFacts 对应：
+//
+//	function mark(n: number): number { console.log(n); return n; }
+//	console.log(mark(1) < mark(2));
+//	console.log(1 === 1);
+//	console.log(true !== false);
+func compareFacts() *frontend.Facts {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	markBody := node("Block",
+		node("ExpressionStatement", consoleLog(ident("n", 2))),
+		node("ReturnStatement", ident("n", 2)),
+	)
+	mark := func(v string) frontend.Node {
+		return typed("CallExpression", frontend.KindNumber, ident("mark", 1), literal(v))
+	}
+	module := node("Block",
+		node("ExpressionStatement", consoleLog(compareNode("<", mark("0x3ff0000000000000"), mark("0x4000000000000000")))),
+		node("ExpressionStatement", consoleLog(compareNode("===", literal("0x3ff0000000000000"), literal("0x3ff0000000000000")))),
+		node("ExpressionStatement", consoleLog(compareNode("!==", boolLiteral(true), boolLiteral(false)))),
+	)
+	return &frontend.Facts{
+		SchemaVersion: 1,
+		Session:       "s",
+		File:          "/tmp/t.ts",
+		Module:        &module,
+		Declarations: []frontend.Declaration{
+			{ID: 1, Kind: frontend.DeclFunction, Name: "mark", Start: 0, Length: 20, Result: &number, Parameters: []int{2}, Body: &markBody},
+			{ID: 2, Kind: frontend.DeclParameter, Name: "n", Start: 4, Length: 1, Type: &number},
+		},
+	}
+}
+
+func TestLowersComparisonProgram(t *testing.T) {
+	module := lowerFacts(t, compareFacts())
+	main := module.Functions[1]
+	if main.Name != "main" || len(main.Body) != 4 {
+		t.Fatalf("main 的形状不对：%+v", main)
+	}
+	first := main.Body[0]
+	if first.Op != nir.OpPrint || first.Value == nil || first.Value.Op != nir.OpCompare || first.Value.Operator != "<" {
+		t.Fatalf("第一条应是 print(mark(1) < mark(2))：%+v", first)
+	}
+	if first.Value.Left == nil || first.Value.Left.Op != nir.OpCall || first.Value.Right == nil || first.Value.Right.Op != nir.OpCall {
+		t.Fatalf("比较两侧应保留两个调用：%+v", first.Value)
+	}
+	if got := main.Body[1].Value; got == nil || got.Op != nir.OpCompare || got.Operator != "===" {
+		t.Fatalf("第二条应是 number 的严格相等：%+v", got)
+	}
+	if got := main.Body[2].Value; got == nil || got.Op != nir.OpCompare || got.Operator != "!==" {
+		t.Fatalf("第三条应是 boolean 的严格不等：%+v", got)
+	}
+}
+
+func TestRejectsComparisonMismatches(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*frontend.Facts)
+	}{
+		{
+			name: "有序比较收到 boolean",
+			mutate: func(f *frontend.Facts) {
+				cmp := f.Module.Children[0].Children[0].Children[1]
+				cmp.Children[0] = boolLiteral(true)
+			},
+		},
+		{
+			name: "严格相等两侧类型不同",
+			mutate: func(f *frontend.Facts) {
+				cmp := f.Module.Children[1].Children[0].Children[1]
+				cmp.Children[0] = boolLiteral(true)
+			},
+		},
+		{
+			name: "严格相等不支持 string",
+			mutate: func(f *frontend.Facts) {
+				cmp := f.Module.Children[1].Children[0].Children[1]
+				cmp.Children[0].Type = &frontend.Type{Kind: frontend.KindString}
+				cmp.Children[1].Type = &frontend.Type{Kind: frontend.KindString}
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			facts := compareFacts()
+			c.mutate(facts)
+			module, err := Lower(snapshot(t), facts)
+			if err == nil {
+				t.Fatal("应被拒绝")
+			}
+			if module != nil {
+				t.Fatal("失败时不应返回模块")
+			}
+			var d *diagnostic.Diagnostic
+			if !errors.As(err, &d) || d.Code != "lower.bad-type" {
+				t.Fatalf("错误码应为 lower.bad-type，实际 %v", err)
 			}
 		})
 	}

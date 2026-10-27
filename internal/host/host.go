@@ -152,33 +152,45 @@ func build(root, binary string, runner toolchain.Runner) error {
 	return nil
 }
 
-// hashSources 汇总宿主编译真正用到的源码：消费者模块的 .go 与 go.mod/go.sum，
-// 以及适配包源码。键是仓库内相对路径，值是该文件的 sha256。
+// hashSources 汇总宿主编译真正用到的源码：消费者模块的 .go 与 go.mod/go.sum、
+// 适配包源码，以及宿主通过 replace 链接的 compiler 包。键是仓库内相对路径，
+// 值是该文件的 sha256。
+//
+// compiler 目录必须一起算：宿主不是只编译 consumer 和适配包，它还链接
+// capability、lower、nir 等包。少算这些文件，改了它们之后宿主不会重建，命令行
+// 就会继续用旧的能力规则。
 func hashSources(root string) (map[string]string, error) {
 	out := make(map[string]string)
-	for _, dir := range []string{ConsumerDir, AdapterDir} {
+	for _, dir := range []string{ConsumerDir, AdapterDir, "compiler"} {
 		full := filepath.Join(root, filepath.FromSlash(dir))
-		entries, err := os.ReadDir(full)
-		if err != nil {
-			return nil, diagnostic.New(diagnostic.Environment, "host.no-source", "无法读取 %s", dir).WithDetail(err.Error())
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
+		err := filepath.Walk(full, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
 			}
-			name := e.Name()
+			if info.IsDir() {
+				return nil
+			}
+			name := info.Name()
 			if strings.HasSuffix(name, "_test.go") {
 				// 测试文件不参与宿主编译，改它们不该触发重建。
-				continue
+				return nil
 			}
 			if !strings.HasSuffix(name, ".go") && name != "go.mod" && name != "go.sum" {
-				continue
+				return nil
 			}
-			sum, err := hashFile(filepath.Join(full, name))
+			rel, err := filepath.Rel(root, path)
 			if err != nil {
-				return nil, diagnostic.New(diagnostic.Environment, "host.no-source", "无法读取 %s/%s", dir, name).WithDetail(err.Error())
+				return err
 			}
-			out[dir+"/"+name] = sum
+			sum, err := hashFile(path)
+			if err != nil {
+				return err
+			}
+			out[filepath.ToSlash(rel)] = sum
+			return nil
+		})
+		if err != nil {
+			return nil, diagnostic.New(diagnostic.Environment, "host.no-source", "无法读取 %s", dir).WithDetail(err.Error())
 		}
 	}
 	return out, nil

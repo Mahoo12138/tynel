@@ -31,7 +31,7 @@ func typed(kind string, k frontend.Kind, children ...frontend.Node) frontend.Nod
 }
 
 func ident(name string, target int) frontend.Node {
-	n := node("Identifier")
+	n := typed("Identifier", frontend.KindNumber)
 	n.Name = name
 	n.Target = target
 	return n
@@ -48,6 +48,20 @@ func binary(op string, left, right frontend.Node) frontend.Node {
 	n := typed("BinaryExpression", frontend.KindNumber, left, right)
 	n.Op = op
 	return n
+}
+
+func compareNode(op string, left, right frontend.Node) frontend.Node {
+	n := typed("BinaryExpression", frontend.KindBoolean, left, right)
+	n.Op = op
+	return n
+}
+
+func boolLiteral(v bool) frontend.Node {
+	kind := "FalseKeyword"
+	if v {
+		kind = "TrueKeyword"
+	}
+	return typed(kind, frontend.KindBoolean)
 }
 
 // base 是一份最小的合法事实：add(a, b) 的声明与函数体。
@@ -240,6 +254,52 @@ func TestBooleanDeclarationsPass(t *testing.T) {
 	if findings := check(t, facts); len(findings) != 0 {
 		t.Fatalf("boolean 声明应通过，实际 %v", codes(findings))
 	}
+}
+
+// TestComparisonOperators 覆盖比较的类型规则：有序比较只接受 number，严格
+// 相等要求两侧同类型，宽松相等与 bool 排序被拒绝。
+func TestComparisonOperators(t *testing.T) {
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+
+	// 合法的有序比较与严格相等。
+	facts := base()
+	facts.Declarations[0].Result = &boolean
+	body := node("Block", node("ReturnStatement", compareNode("<", ident("a", 2), ident("b", 3))))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("number 的有序比较应通过，实际 %v", codes(findings))
+	}
+
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	facts.Declarations[1].Type = &boolean
+	facts.Declarations[2].Type = &boolean
+	body = node("Block", node("ReturnStatement", compareNode("===", boolIdent("a", 2), boolIdent("b", 3))))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("boolean 的严格相等应通过，实际 %v", codes(findings))
+	}
+
+	// 宽松相等：TypeScript 接受，但不在本阶段子集内。
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	body = node("Block", node("ReturnStatement", compareNode("==", ident("a", 2), ident("b", 3))))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-operator")
+
+	// bool 排序：TypeScript 自己会拒绝，这里再挡一次伪造的事实。
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	body = node("Block", node("ReturnStatement", compareNode("<", boolLiteral(true), boolLiteral(false))))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	// 混合类型严格相等。
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	body = node("Block", node("ReturnStatement", compareNode("===", ident("a", 2), boolLiteral(true))))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
 }
 
 // TestBangRequiresBoolean 确认 `!` 只接受 boolean。TypeScript 允许 !5，本阶段

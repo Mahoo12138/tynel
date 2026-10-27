@@ -215,6 +215,34 @@ func (c *checker) exprType(e *Expr, sc *scope) (string, error) {
 			}
 		}
 		return TypeNumber, nil
+	case OpCompare:
+		if e.Left == nil || e.Right == nil {
+			return "", failAt("nir.missing", e.Pos, "compare 缺少左或右操作数")
+		}
+		left, err := c.exprType(e.Left, sc)
+		if err != nil {
+			return "", err
+		}
+		right, err := c.exprType(e.Right, sc)
+		if err != nil {
+			return "", err
+		}
+		if IsOrderingOperator(e.Operator) {
+			if left != TypeNumber || right != TypeNumber {
+				return "", failAt("nir.operand-type", e.Pos,
+					"有序比较 %q 需要两个 number，实际为 %s 与 %s", e.Operator, left, right)
+			}
+			return TypeBool, nil
+		}
+		if left != right {
+			return "", failAt("nir.operand-type", e.Pos,
+				"严格相等 %q 需要两侧同类型，实际为 %s 与 %s", e.Operator, left, right)
+		}
+		if left != TypeNumber && left != TypeBool {
+			return "", failAt("nir.operand-type", e.Pos,
+				"严格相等 %q 只接受 number 或 bool，实际为 %s", e.Operator, left)
+		}
+		return TypeBool, nil
 	default:
 		return "", failAt("nir.bad-op", e.Pos, "未知表达式 op %q", e.Op)
 	}

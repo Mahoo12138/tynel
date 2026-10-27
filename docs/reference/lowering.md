@@ -121,6 +121,12 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 
 `!` 不一样，它有对应的 NIR 操作：`!value` 降成 `not`，操作数与结果都是 `bool`。TypeScript 允许对数字取反（`!1` 是 `false`），但降低要求操作数的类型摘要是 `boolean`，否则报 `lower.bad-type`。
 
+## 比较
+
+比较运算降成 NIR 的 `compare`，结果是 `bool`。有序比较要求两侧类型摘要是 `number`；严格相等要求两侧同类型，且只能是 `number` 或 `boolean`。降低不改变操作数顺序，`mark(1) < mark(2)` 在 NIR 里仍是左 `mark(1)`、右 `mark(2)`，求值顺序由后端保证。
+
+`==` 与 `!=` 不是 NIR 运算符，能力检查会先拒绝；如果事实绕过前端直接进来，降低按 `lower.bad-operator` 拒绝。浮点比较的结果见[比较语义](comparison.md)。
+
 ## 降低阶段拒绝什么
 
 降低不重复做类型检查，但它不盲信事实。下面这些情况会在降低时报错，并且不返回模块：
@@ -129,7 +135,7 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 | --- | --- |
 | `lower.bad-type` | 操作数、实参、返回值或 `let` 值的类型摘要与期望类型不符（`number` 或 `boolean`） |
 | `lower.bad-arity` | 二元运算不是两个操作数、`return` 多个值、实参个数与形参不符 |
-| `lower.bad-operator` | 运算符不在 `+ - * /`（一元 `- +`）之内 |
+| `lower.bad-operator` | 运算符不在算术、一元 `- +`、`!` 与比较之内（包括宽松 `==` / `!=`） |
 | `lower.bad-unary` | 一元负号作用在非字面量上 |
 | `lower.unknown-name` | 引用的声明不存在，或参数不属于当前函数 |
 | `lower.module-const-in-function` | 函数内引用模块级常量（需要全局变量，本阶段没有） |

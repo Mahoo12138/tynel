@@ -292,6 +292,9 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error
 		v := n.Kind == "TrueKeyword"
 		return &nir.Expr{Op: nir.OpBool, Value: &v, Pos: l.pos(n.Start)}, nil
 	case "BinaryExpression":
+		if isCompare(n.Op) {
+			return l.compare(n, sc, depth)
+		}
 		if !isArithmetic(n.Op) {
 			return nil, l.fail(n.Start, "lower.bad-operator", "运算符 %q 不在 + - * / 之内", n.Op)
 		}
@@ -342,6 +345,42 @@ func (l *lowerer) identifier(n *frontend.Node, sc *scope) (*nir.Expr, error) {
 	default:
 		return nil, l.fail(n.Start, "lower.function-value", "函数 %q 作为值使用", n.Name)
 	}
+}
+
+// compare 降低有序比较与严格相等。有序比较只接受 number；严格相等要求两侧
+// 是同一个标量类型。操作数顺序原样保留，求值顺序由后端负责。
+func (l *lowerer) compare(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error) {
+	if len(n.Children) != 2 {
+		return nil, l.fail(n.Start, "lower.bad-arity", "比较运算有 %d 个操作数", len(n.Children))
+	}
+	leftNode, rightNode := &n.Children[0], &n.Children[1]
+	if nir.IsOrderingOperator(n.Op) {
+		if err := l.typedOperand(leftNode, frontend.KindNumber, "比较的左操作数"); err != nil {
+			return nil, err
+		}
+		if err := l.typedOperand(rightNode, frontend.KindNumber, "比较的右操作数"); err != nil {
+			return nil, err
+		}
+	} else {
+		if leftNode.Type == nil || rightNode.Type == nil {
+			return nil, l.fail(n.Start, "lower.bad-type", "严格相等的操作数缺少类型摘要")
+		}
+		if leftNode.Type.Kind != rightNode.Type.Kind {
+			return nil, l.fail(n.Start, "lower.bad-type", "严格相等需要两侧同类型，实际为 %s 与 %s", leftNode.Type.Kind, rightNode.Type.Kind)
+		}
+		if leftNode.Type.Kind != frontend.KindNumber && leftNode.Type.Kind != frontend.KindBoolean {
+			return nil, l.fail(n.Start, "lower.bad-type", "严格相等只支持 number 或 boolean，实际为 %s", leftNode.Type.Kind)
+		}
+	}
+	left, err := l.expr(leftNode, sc, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	right, err := l.expr(rightNode, sc, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	return &nir.Expr{Op: nir.OpCompare, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, nil
 }
 
 // unary 处理一元运算。`!` 直接降成 not；一元正负号只接受数字字面量，并在
@@ -476,6 +515,10 @@ func isArithmetic(op string) bool {
 		return true
 	}
 	return false
+}
+
+func isCompare(op string) bool {
+	return nir.IsCompareOperator(op)
 }
 
 func parseBits(s string) (uint64, error) {

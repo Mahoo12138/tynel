@@ -20,6 +20,9 @@ func call(name string, args ...Expr) Expr {
 func binary(op string, left, right Expr) Expr {
 	return Expr{Op: OpBinary, Operator: op, Left: &left, Right: &right}
 }
+func compare(op string, left, right Expr) Expr {
+	return Expr{Op: OpCompare, Operator: op, Left: &left, Right: &right}
+}
 func ret(e Expr) Stmt       { return Stmt{Op: OpReturn, Value: &e} }
 func retVoid() Stmt         { return Stmt{Op: OpReturn} }
 func printStmt(e Expr) Stmt { return Stmt{Op: OpPrint, Value: &e} }
@@ -105,6 +108,38 @@ func TestVerifyBooleanModule(t *testing.T) {
 
 func boolPtr(v bool) *bool { return &v }
 
+// TestVerifyComparisonModule 覆盖有序比较与严格相等：number 比较、boolean
+// 相等、比较结果作为 print 与 let 的值。
+func TestVerifyComparisonModule(t *testing.T) {
+	less := Function{
+		Name:   "less",
+		Result: TypeBool,
+		Params: []Param{{Name: "a", Type: TypeNumber}, {Name: "b", Type: TypeNumber}},
+		Body:   []Stmt{ret(compare("<", param("a"), param("b")))},
+	}
+	same := Function{
+		Name:   "same",
+		Result: TypeBool,
+		Params: []Param{{Name: "a", Type: TypeBool}, {Name: "b", Type: TypeBool}},
+		Body:   []Stmt{ret(compare("===", param("a"), param("b")))},
+	}
+	result := Expr{Op: OpLocal, Name: "result"}
+	two, one := num(2), num(1)
+	m := module("main",
+		less, same,
+		mainWith(
+			Stmt{Op: OpLet, Name: "result", Value: &Expr{Op: OpCompare, Operator: ">=", Left: &two, Right: &one}},
+			printStmt(result),
+			printStmt(call("less", num(1), num(2))),
+			printStmt(call("same", boolLit(true), boolLit(false))),
+			discard(compare("!==", num(1), num(1))),
+		),
+	)
+	if err := Verify(m); err != nil {
+		t.Fatalf("比较模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -137,6 +172,9 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		{"print 一个 void 调用", module("main", mainWith(printStmt(call("log"))), logFn), "nir.print-type"},
 		{"运算符操作数是 void 调用", module("main", mainWith(printStmt(binary("+", call("log"), num(1)))), logFn), "nir.operand-type"},
 		{"not 的操作数是 number", module("main", mainWith(printStmt(not(num(1))))), "nir.operand-type"},
+		{"有序比较收到 boolean", module("main", mainWith(printStmt(compare("<", boolLit(true), num(1))))), "nir.operand-type"},
+		{"严格相等两侧类型不同", module("main", mainWith(printStmt(compare("===", num(1), boolLit(true))))), "nir.operand-type"},
+		{"宽松相等不是 NIR 运算符", module("main", mainWith(printStmt(compare("==", num(1), num(1))))), "nir.bad-op"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

@@ -34,13 +34,14 @@ const (
 
 // 表达式操作。
 const (
-	OpNumber = "number"
-	OpBool   = "bool"
-	OpParam  = "param"
-	OpLocal  = "local"
-	OpCall   = "call"
-	OpBinary = "binary"
-	OpNot    = "not"
+	OpNumber  = "number"
+	OpBool    = "bool"
+	OpParam   = "param"
+	OpLocal   = "local"
+	OpCall    = "call"
+	OpBinary  = "binary"
+	OpCompare = "compare"
+	OpNot     = "not"
 )
 
 // 语句操作。
@@ -59,8 +60,18 @@ const (
 	OpDiscard = "discard"
 )
 
-// BinaryOperators 是首版允许的二元运算符，顺序用于报错提示。
+// BinaryOperators 是首版允许的算术运算符，顺序用于报错提示。
 var BinaryOperators = []string{"+", "-", "*", "/"}
+
+// CompareOperators 是比较运算符。有序比较只接受 number，严格相等接受同类
+// number 或 boolean。顺序用于报错提示。
+var CompareOperators = []string{"<", "<=", ">", ">=", "===", "!=="}
+
+// OrderingOperators 是需要两个 number 的有序比较。
+var OrderingOperators = []string{"<", "<=", ">", ">="}
+
+// EqualityOperators 是要求两侧同类型的严格相等。
+var EqualityOperators = []string{"===", "!=="}
 
 // Module 是一个可编译单元。
 type Module struct {
@@ -159,6 +170,31 @@ func parseBits(bits string) (uint64, error) {
 // IsBinaryOperator 报告 op 是否为支持的二元运算符。
 func IsBinaryOperator(op string) bool {
 	for _, candidate := range BinaryOperators {
+		if candidate == op {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCompareOperator 报告 op 是否为支持的比较运算符。
+func IsCompareOperator(op string) bool {
+	return IsOrderingOperator(op) || IsEqualityOperator(op)
+}
+
+// IsOrderingOperator 报告 op 是否是有序比较。
+func IsOrderingOperator(op string) bool {
+	for _, candidate := range OrderingOperators {
+		if candidate == op {
+			return true
+		}
+	}
+	return false
+}
+
+// IsEqualityOperator 报告 op 是否是严格相等。
+func IsEqualityOperator(op string) bool {
+	for _, candidate := range EqualityOperators {
 		if candidate == op {
 			return true
 		}

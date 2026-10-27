@@ -315,10 +315,24 @@ func checkExpr(root *Expr, rootPath string, depth int, nodes *int, limits Limits
 				item{e.Left, it.path + ".left", it.depth + 1},
 				item{e.Right, it.path + ".right", it.depth + 1},
 			)
+		case OpCompare:
+			if err := onlyFields(e, it.path, "operator,left,right"); err != nil {
+				return err
+			}
+			if !IsCompareOperator(e.Operator) {
+				return badf("nir.bad-op", "%s.operator 为 %q，只接受 %s", it.path, e.Operator, strings.Join(CompareOperators, "、"))
+			}
+			if e.Left == nil || e.Right == nil {
+				return badf("nir.missing", "%s 的 compare 缺少 left 或 right", it.path)
+			}
+			stack = append(stack,
+				item{e.Left, it.path + ".left", it.depth + 1},
+				item{e.Right, it.path + ".right", it.depth + 1},
+			)
 		case "":
 			return badf("nir.missing", "%s 缺少 op", it.path)
 		default:
-			return badf("nir.bad-op", "%s.op 为 %q，只接受 number、bool、param、local、call、binary 或 not", it.path, e.Op)
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 number、bool、param、local、call、binary、compare 或 not", it.path, e.Op)
 		}
 	}
 	return nil

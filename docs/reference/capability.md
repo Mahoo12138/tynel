@@ -53,12 +53,14 @@ function neverCalled(): number {
 | 类别 | 支持 | 说明 |
 | --- | --- | --- |
 | 声明 | `function`、参数、顶层 `const` | 参数与常量限 `number`、`boolean`，返回值限 `number`、`boolean` 或 `void` |
-| 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!` | `!` 只接受 `boolean`；其余运算符拒绝 |
+| 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!`，比较 `<` `<=` `>` `>=` `===` `!==` | 有序比较只接受 `number`；严格相等要求两侧同类型；宽松 `==` / `!=` 拒绝 |
 | 调用 | 本文件内声明的函数，实参个数与形参一致 | 不支持函数值、方法调用 |
 | 语句 | `return`、表达式语句、语句块 | 表达式语句的结果被丢弃，见下 |
 | 输出 | `console.log(<number 或 boolean>)` | 必须是内置 `console`，见下 |
 
 `boolean` 现在是完整的标量：可以作为常量、参数、返回值和输出。`!` 只对 `boolean` 取反；TypeScript 允许 `!1`，但本阶段不把数字的真假转换带进原生后端，`!1` 按 `cap.bad-type` 拒绝。
+
+比较分两类：`<` `<=` `>` `>=` 只接受两个 `number`；`===` `!==` 要求两侧同为 `number` 或同为 `boolean`。`==` 与 `!=` 是合法 TypeScript，但会做隐式类型转换，本阶段按 `cap.bad-operator` 拒绝。`true < false` 在 TypeScript 里能通过，能力检查按 `cap.bad-type` 拒绝——布尔值没有原生顺序。混合类型比较（`1 === true`）由 TypeScript 直接拒绝。
 
 ## void 与丢弃结果
 
@@ -89,7 +91,7 @@ const x = announce(1);     // 拒绝：void 没有值可以绑
 | `cap.forbidden-global` | 调用 `eval` |
 | `cap.shadowed-console` | `console` 被本文件的声明遮蔽 |
 | `cap.bad-console-call` | `console.log` 的参数不是恰好一个 `number` 或 `boolean` |
-| `cap.bad-operator` | 运算符不在 `+ - * /`（或一元 `- +`）之内 |
+| `cap.bad-operator` | 运算符不在算术、一元 `- +`、`!` 与比较之内，包括宽松 `==` / `!=` |
 | `cap.unknown-name` | 引用了本文件之外的名称 |
 | `cap.arg-count` | 实参个数与函数声明的形参个数不一致 |
 | `cap.void-value` | 把 void 调用当作值使用：实参、操作数、返回值、常量初始值 |

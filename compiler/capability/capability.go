@@ -11,6 +11,7 @@ package capability
 import (
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
 	"github.com/Mahoo12138/tynel/compiler/frontend"
+	"github.com/Mahoo12138/tynel/compiler/nir"
 	"github.com/Mahoo12138/tynel/compiler/source"
 )
 
@@ -115,16 +116,35 @@ func (c *checker) node(n *frontend.Node) {
 		}
 		c.node(&n.Children[0])
 	case "BinaryExpression":
-		if !isArithmetic(n.Op) {
-			c.report(n.Start, "cap.bad-operator", "运算符 %q 不在本阶段支持的 + - * / 之内", n.Op)
-			return
-		}
 		if len(n.Children) != 2 {
 			c.report(n.Start, "cap.unsupported-syntax", "二元运算有 %d 个操作数", len(n.Children))
 			return
 		}
-		for i := range n.Children {
-			c.valueNode(&n.Children[i], "运算符 "+n.Op+" 的操作数")
+		switch {
+		case isArithmetic(n.Op):
+			for i := range n.Children {
+				c.numberOperand(&n.Children[i], "运算符 "+n.Op+" 的操作数")
+			}
+		case nir.IsOrderingOperator(n.Op):
+			for i := range n.Children {
+				c.numberOperand(&n.Children[i], "比较 "+n.Op+" 的操作数")
+			}
+		case nir.IsEqualityOperator(n.Op):
+			left, right := &n.Children[0], &n.Children[1]
+			if left.Type == nil || right.Type == nil || left.Type.Kind != right.Type.Kind {
+				c.report(n.Start, "cap.bad-type", "严格相等 %q 需要两侧同类型", n.Op)
+				return
+			}
+			if left.Type.Kind != frontend.KindNumber && left.Type.Kind != frontend.KindBoolean {
+				c.report(n.Start, "cap.bad-type", "严格相等 %q 只支持 number 或 boolean，实际为 %s", n.Op, left.Type.Kind)
+				return
+			}
+			c.node(left)
+			c.node(right)
+		case n.Op == "==" || n.Op == "!=":
+			c.report(n.Start, "cap.bad-operator", "宽松相等 %q 不在本阶段子集内，请使用 ===", n.Op)
+		default:
+			c.report(n.Start, "cap.bad-operator", "运算符 %q 不在本阶段支持的 + - * / 与比较之内", n.Op)
 		}
 	case "PrefixUnaryExpression":
 		if n.Op == "!" {
@@ -191,15 +211,29 @@ func (c *checker) valueNode(n *frontend.Node, what string) {
 // boolOperand 要求一个表达式是 boolean。TypeScript 允许对任意值取反（!5 是
 // false），但本阶段只把 boolean 的取反映射到原生指令，其余类型先拒绝。
 func (c *checker) boolOperand(n *frontend.Node, what string) {
+	c.typedOperand(n, frontend.KindBoolean, what)
+}
+
+// numberOperand 要求一个表达式是 number。算术与有序比较都靠它把「类型摘要
+// 对不上」的伪造事实挡在降低之前。
+func (c *checker) numberOperand(n *frontend.Node, what string) {
+	c.typedOperand(n, frontend.KindNumber, what)
+}
+
+func (c *checker) typedOperand(n *frontend.Node, want frontend.Kind, what string) {
 	if n == nil {
 		return
 	}
-	if n.Type == nil || n.Type.Kind != frontend.KindBoolean {
+	if n.Type != nil && n.Type.Kind == frontend.KindVoid {
+		c.report(n.Start, "cap.void-value", "%s 需要一个值，但这里是 void 调用", what)
+		return
+	}
+	if n.Type == nil || n.Type.Kind != want {
 		kind := frontend.KindOther
 		if n.Type != nil {
 			kind = n.Type.Kind
 		}
-		c.report(n.Start, "cap.bad-type", "%s是 %s，需要 boolean", what, kind)
+		c.report(n.Start, "cap.bad-type", "%s是 %s，需要 %s", what, kind, want)
 		return
 	}
 	c.node(n)

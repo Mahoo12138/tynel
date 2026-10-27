@@ -117,6 +117,14 @@ func TestBoolRequiresValue(t *testing.T) {
 	}
 }
 
+func TestCompareRequiresOperands(t *testing.T) {
+	_, err := DecodeBytes([]byte(`{"schemaVersion":1,"entry":"main","functions":[
+		{"name":"main","params":[],"result":"void","body":[{"op":"print","value":{"op":"compare","operator":"<","left":{"op":"number","bits":"0x3ff0000000000000"}}}]}]}`), DefaultLimits())
+	if err == nil || !strings.Contains(err.Error(), "nir.missing") {
+		t.Fatalf("缺右操作数的 compare 应被拒绝，实际 %v", err)
+	}
+}
+
 func TestSpecialValuesSurviveEncoding(t *testing.T) {
 	cases := []struct {
 		name  string

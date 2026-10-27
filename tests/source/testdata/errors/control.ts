@@ -1,7 +1,7 @@
-// 控制流不在本阶段子集内。
-function pick(): number {
-  if (true) {
-    return 1;
+// while 仍不在本阶段子集内。
+function count(n: number): number {
+  while (n < 3) {
+    console.log(n);
   }
-  return 0;
+  return n;
 }

@@ -1,7 +1,7 @@
-// 这个函数没有被调用，但检查不靠可达性：里面的控制流同样要拒绝。
-function neverCalled(): number {
-  if (true) {
-    return 1;
+// 这个函数没有被调用，但检查不靠可达性：里面的循环同样要拒绝。
+function neverCalled(n: number): number {
+  while (n < 3) {
+    console.log(n);
   }
-  return 0;
+  return n;
 }

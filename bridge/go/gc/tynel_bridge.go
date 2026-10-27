@@ -174,91 +174,67 @@ func goType(t string) (*types.Type, error) {
 	return nil, fmt.Errorf("类型 %q 不支持", t)
 }
 
+// localScope 是 NIR 语句块在 bridge 里的名字表。NIR 允许子块遮蔽父块，
+// 所以查找要沿父链走；Go 的局部变量名不能重复，重名时由 builder 改名。
+type localScope struct {
+	parent *localScope
+	names  map[string]*ir.Name
+}
+
+func (s *localScope) child() *localScope {
+	return &localScope{parent: s, names: make(map[string]*ir.Name)}
+}
+
+func (s *localScope) lookup(name string) (*ir.Name, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if n, ok := cur.names[name]; ok {
+			return n, true
+		}
+	}
+	return nil, false
+}
+
+func (s *localScope) define(name string, n *ir.Name) {
+	s.names[name] = n
+}
+
+// bodyBuilder 把一次函数体的构造状态集中在一起：函数、被调函数表、支持函数、
+// 参数表和已经用掉的 Go 局部变量名。
+type bodyBuilder struct {
+	fn         *ir.Func
+	funcs      map[string]*ir.Func
+	printFloat *ir.Name
+	printBool  *ir.Name
+	bits       *ir.Name
+	pos        src.XPos
+	params     map[string]*ir.Name
+	used       map[string]bool
+	discarded  int
+	shadow     int
+}
+
 func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, boolHelper, bitsHelper *ir.Name, pos src.XPos) error {
-	params := make(map[string]*ir.Name, len(f.Params))
-	locals := make(map[string]*ir.Name)
+	b := &bodyBuilder{
+		fn:         fn,
+		funcs:      funcs,
+		printFloat: helper,
+		printBool:  boolHelper,
+		bits:       bitsHelper,
+		pos:        pos,
+		params:     make(map[string]*ir.Name, len(f.Params)),
+		used:       make(map[string]bool),
+	}
+	root := &localScope{names: make(map[string]*ir.Name)}
 	for i, p := range f.Params {
 		if i >= len(fn.Dcl) {
 			return fmt.Errorf("函数 %q 的参数数量与声明不符", f.Name)
 		}
-		params[p.Name] = fn.Dcl[i]
+		b.params[p.Name] = fn.Dcl[i]
+		b.used[p.Name] = true
 	}
-
-	body := make([]ir.Node, 0, len(f.Body))
-	discarded := 0
-	for _, s := range f.Body {
-		switch s.Op {
-		case "return":
-			if s.Value == nil {
-				body = append(body, ir.NewReturnStmt(pos, nil))
-				continue
-			}
-			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
-			if err != nil {
-				return err
-			}
-			body = append(body, ir.NewReturnStmt(pos, []ir.Node{v}))
-		case "let":
-			if s.Value == nil {
-				return fmt.Errorf("let %q 缺少值", s.Name)
-			}
-			if _, exists := locals[s.Name]; exists {
-				return fmt.Errorf("局部值 %q 重复定义", s.Name)
-			}
-			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
-			if err != nil {
-				return err
-			}
-			// 局部值就是一个 Go 自动变量：声明在函数里，赋值一次，之后按名字读。
-			// 类型跟着值走，bool 局部值不会被塞进 float64 槽位。
-			typ, err := exprGoType(s.Value, params, locals, funcs)
-			if err != nil {
-				return err
-			}
-			sym := &types.Sym{Name: s.Name, Pkg: types.LocalPkg}
-			local := fn.NewLocal(pos, sym, typ)
-			locals[s.Name] = local
-			body = append(body, ir.NewAssignStmt(pos, local, v))
-		case "discard":
-			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
-			if err != nil {
-				return err
-			}
-			if isVoidCall(s.Value, funcs) {
-				// void 调用本身就是语句形状，直接放进函数体。
-				body = append(body, v)
-				break
-			}
-			// 数值或布尔表达式不能裸着当语句：一个光秃秃的变量名会让编译器报
-			// "unexpected stmt"。赋给一个从不读取的临时变量，求值照做，
-			// 结果丢掉；死存储由 SSA 清掉。
-			typ, err := exprGoType(s.Value, params, locals, funcs)
-			if err != nil {
-				return err
-			}
-			discarded++
-			sym := &types.Sym{Name: fmt.Sprintf("_tynel_discard_%d", discarded), Pkg: types.LocalPkg}
-			tmp := fn.NewLocal(pos, sym, typ)
-			body = append(body, ir.NewAssignStmt(pos, tmp, v))
-		case "print":
-			v, err := buildExpr(s.Value, params, locals, funcs, bitsHelper, pos)
-			if err != nil {
-				return err
-			}
-			// print 不生成 Go 源码，而是调用固定支持函数；number 与 bool 各有
-			// 一个目标，选择依据是值的类型，不是运行时的判断。
-			typ, err := exprGoType(s.Value, params, locals, funcs)
-			if err != nil {
-				return err
-			}
-			target := helper
-			if typ == types.Types[types.TBOOL] {
-				target = boolHelper
-			}
-			body = append(body, ir.NewCallExpr(pos, ir.OCALL, target, []ir.Node{v}))
-		default:
-			return fmt.Errorf("不支持的语句 op %q", s.Op)
-		}
+	body, err := b.stmts(f.Body, root)
+	if err != nil {
+		return err
 	}
 	// 编译器把「没有函数体」当成外部声明：gc.compile 里 len(fn.Body)==0 时只
 	// 生成声明、不生成代码。void 函数正常结束等价于一条空 return，补上它，
@@ -273,7 +249,126 @@ func buildBody(fn *ir.Func, f function, funcs map[string]*ir.Func, helper, boolH
 	return nil
 }
 
-func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir.Func, bitsHelper *ir.Name, pos src.XPos) (ir.Node, error) {
+func (b *bodyBuilder) stmts(stmts []stmt, sc *localScope) ([]ir.Node, error) {
+	body := make([]ir.Node, 0, len(stmts))
+	for _, s := range stmts {
+		n, err := b.stmt(s, sc)
+		if err != nil {
+			return nil, err
+		}
+		if n != nil {
+			body = append(body, n)
+		}
+	}
+	return body, nil
+}
+
+func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {
+	switch s.Op {
+	case "return":
+		if s.Value == nil {
+			return ir.NewReturnStmt(b.pos, nil), nil
+		}
+		v, err := b.expr(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		return ir.NewReturnStmt(b.pos, []ir.Node{v}), nil
+	case "let":
+		if s.Value == nil {
+			return nil, fmt.Errorf("let %q 缺少值", s.Name)
+		}
+		if _, exists := sc.names[s.Name]; exists {
+			return nil, fmt.Errorf("局部值 %q 重复定义", s.Name)
+		}
+		v, err := b.expr(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		// 局部值就是一个 Go 自动变量：声明在函数里，赋值一次，之后按名字读。
+		// 类型跟着值走，bool 局部值不会被塞进 float64 槽位。
+		typ, err := b.exprType(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		local := b.newLocal(s.Name, typ)
+		sc.define(s.Name, local)
+		return ir.NewAssignStmt(b.pos, local, v), nil
+	case "discard":
+		v, err := b.expr(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		if b.isVoidCall(s.Value) {
+			// void 调用本身就是语句形状，直接放进函数体。
+			return v, nil
+		}
+		// 数值或布尔表达式不能裸着当语句：一个光秃秃的变量名会让编译器报
+		// "unexpected stmt"。赋给一个从不读取的临时变量，求值照做，
+		// 结果丢掉；死存储由 SSA 清掉。
+		typ, err := b.exprType(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		b.discarded++
+		sym := &types.Sym{Name: fmt.Sprintf("_tynel_discard_%d", b.discarded), Pkg: types.LocalPkg}
+		tmp := b.fn.NewLocal(b.pos, sym, typ)
+		return ir.NewAssignStmt(b.pos, tmp, v), nil
+	case "print":
+		v, err := b.expr(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		// print 不生成 Go 源码，而是调用固定支持函数；number 与 bool 各有
+		// 一个目标，选择依据是值的类型，不是运行时的判断。
+		typ, err := b.exprType(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		target := b.printFloat
+		if typ == types.Types[types.TBOOL] {
+			target = b.printBool
+		}
+		return ir.NewCallExpr(b.pos, ir.OCALL, target, []ir.Node{v}), nil
+	case "if":
+		if s.Cond == nil {
+			return nil, fmt.Errorf("if 缺少条件")
+		}
+		cond, err := b.expr(s.Cond, sc)
+		if err != nil {
+			return nil, err
+		}
+		then, err := b.stmts(s.Then, sc.child())
+		if err != nil {
+			return nil, err
+		}
+		var els []ir.Node
+		if len(s.Else) > 0 {
+			els, err = b.stmts(s.Else, sc.child())
+			if err != nil {
+				return nil, err
+			}
+		}
+		return ir.NewIfStmt(b.pos, cond, then, els), nil
+	default:
+		return nil, fmt.Errorf("不支持的语句 op %q", s.Op)
+	}
+}
+
+// newLocal 造一个 Go 自动变量。同名的局部值可能出现在不同的 NIR 块里，Go
+// 的符号名不能重复，所以后出现的加后缀；NIR 里的名字仍按作用域解析。
+func (b *bodyBuilder) newLocal(name string, typ *types.Type) *ir.Name {
+	symName := name
+	for b.used[symName] {
+		b.shadow++
+		symName = fmt.Sprintf("%s$%d", name, b.shadow)
+	}
+	b.used[symName] = true
+	sym := &types.Sym{Name: symName, Pkg: types.LocalPkg}
+	return b.fn.NewLocal(b.pos, sym, typ)
+}
+
+func (b *bodyBuilder) expr(e *expr, sc *localScope) (ir.Node, error) {
 	if e == nil {
 		return nil, fmt.Errorf("表达式为空")
 	}
@@ -287,106 +382,106 @@ func buildExpr(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir
 		if needsBits(v) {
 			// NaN、无穷和负零没有字面量形式：go/constant 会把负零归一成
 			// 正零，也没有 NaN 和无穷的表示。改成调用按位构造的支持函数。
-			lit := ir.NewBasicLit(pos, types.Types[types.TUINT64], constant.MakeUint64(bits))
-			return ir.NewCallExpr(pos, ir.OCALL, bitsHelper, []ir.Node{lit}), nil
+			lit := ir.NewBasicLit(b.pos, types.Types[types.TUINT64], constant.MakeUint64(bits))
+			return ir.NewCallExpr(b.pos, ir.OCALL, b.bits, []ir.Node{lit}), nil
 		}
-		return ir.NewBasicLit(pos, types.Types[types.TFLOAT64], constant.MakeFloat64(v)), nil
+		return ir.NewBasicLit(b.pos, types.Types[types.TFLOAT64], constant.MakeFloat64(v)), nil
 	case "bool":
 		if e.Value == nil {
 			return nil, fmt.Errorf("bool 缺少 value")
 		}
-		return ir.NewBasicLit(pos, types.Types[types.TBOOL], constant.MakeBool(*e.Value)), nil
+		return ir.NewBasicLit(b.pos, types.Types[types.TBOOL], constant.MakeBool(*e.Value)), nil
 	case "not":
 		if e.Operand == nil {
 			return nil, fmt.Errorf("not 缺少操作数")
 		}
-		x, err := buildExpr(e.Operand, params, locals, funcs, bitsHelper, pos)
+		x, err := b.expr(e.Operand, sc)
 		if err != nil {
 			return nil, err
 		}
-		return ir.NewUnaryExpr(pos, ir.ONOT, x), nil
+		return ir.NewUnaryExpr(b.pos, ir.ONOT, x), nil
 	case "param":
-		n, ok := params[e.Name]
+		n, ok := b.params[e.Name]
 		if !ok {
 			return nil, fmt.Errorf("引用不存在的参数 %q", e.Name)
 		}
 		return n, nil
 	case "local":
-		n, ok := locals[e.Name]
+		n, ok := sc.lookup(e.Name)
 		if !ok {
 			return nil, fmt.Errorf("引用未定义的局部值 %q", e.Name)
 		}
 		return n, nil
 	case "call":
-		callee, ok := funcs[e.Function]
+		callee, ok := b.funcs[e.Function]
 		if !ok {
 			return nil, fmt.Errorf("调用不存在的函数 %q", e.Function)
 		}
 		args := make([]ir.Node, 0, len(e.Args))
 		for i := range e.Args {
-			a, err := buildExpr(&e.Args[i], params, locals, funcs, bitsHelper, pos)
+			a, err := b.expr(&e.Args[i], sc)
 			if err != nil {
 				return nil, err
 			}
 			args = append(args, a)
 		}
-		return ir.NewCallExpr(pos, ir.OCALL, callee.Nname, args), nil
+		return ir.NewCallExpr(b.pos, ir.OCALL, callee.Nname, args), nil
 	case "binary":
 		op, ok := binaryOps[e.Operator]
 		if !ok {
 			return nil, fmt.Errorf("不支持的运算符 %q", e.Operator)
 		}
-		x, err := buildExpr(e.Left, params, locals, funcs, bitsHelper, pos)
+		x, err := b.expr(e.Left, sc)
 		if err != nil {
 			return nil, err
 		}
-		y, err := buildExpr(e.Right, params, locals, funcs, bitsHelper, pos)
+		y, err := b.expr(e.Right, sc)
 		if err != nil {
 			return nil, err
 		}
-		return ir.NewBinaryExpr(pos, op, x, y), nil
+		return ir.NewBinaryExpr(b.pos, op, x, y), nil
 	case "compare":
 		op, ok := compareOps[e.Operator]
 		if !ok {
 			return nil, fmt.Errorf("不支持的比较运算符 %q", e.Operator)
 		}
-		x, err := buildExpr(e.Left, params, locals, funcs, bitsHelper, pos)
+		x, err := b.expr(e.Left, sc)
 		if err != nil {
 			return nil, err
 		}
-		y, err := buildExpr(e.Right, params, locals, funcs, bitsHelper, pos)
+		y, err := b.expr(e.Right, sc)
 		if err != nil {
 			return nil, err
 		}
-		return ir.NewBinaryExpr(pos, op, x, y), nil
+		return ir.NewBinaryExpr(b.pos, op, x, y), nil
 	default:
 		return nil, fmt.Errorf("不支持的表达式 op %q", e.Op)
 	}
 }
 
-// exprGoType 返回一个 NIR 表达式在 Go 里的类型。局部值、参数和调用的类型
+// exprType 返回一个 NIR 表达式在 Go 里的类型。局部值、参数和调用的类型
 // 从已建好的声明上取；字面量与运算按操作符判断。它只服务于「分配什么类型的
 // 局部变量」「调用哪个打印函数」，不重复验证器的工作。
-func exprGoType(e *expr, params, locals map[string]*ir.Name, funcs map[string]*ir.Func) (*types.Type, error) {
+func (b *bodyBuilder) exprType(e *expr, sc *localScope) (*types.Type, error) {
 	switch e.Op {
 	case "number", "binary":
 		return types.Types[types.TFLOAT64], nil
 	case "bool", "not", "compare":
 		return types.Types[types.TBOOL], nil
 	case "param":
-		n, ok := params[e.Name]
+		n, ok := b.params[e.Name]
 		if !ok {
 			return nil, fmt.Errorf("引用不存在的参数 %q", e.Name)
 		}
 		return n.Type(), nil
 	case "local":
-		n, ok := locals[e.Name]
+		n, ok := sc.lookup(e.Name)
 		if !ok {
 			return nil, fmt.Errorf("引用未定义的局部值 %q", e.Name)
 		}
 		return n.Type(), nil
 	case "call":
-		callee, ok := funcs[e.Function]
+		callee, ok := b.funcs[e.Function]
 		if !ok {
 			return nil, fmt.Errorf("调用不存在的函数 %q", e.Function)
 		}
@@ -401,18 +496,17 @@ func exprGoType(e *expr, params, locals map[string]*ir.Name, funcs map[string]*i
 
 // isVoidCall 报告一个 NIR 表达式是不是对 void 函数的直接调用。只有它可以直接
 // 作为语句；其他表达式需要一个承接结果的位置。
-func isVoidCall(e *expr, funcs map[string]*ir.Func) bool {
+func (b *bodyBuilder) isVoidCall(e *expr) bool {
 	if e == nil || e.Op != "call" {
 		return false
 	}
-	callee, ok := funcs[e.Function]
+	callee, ok := b.funcs[e.Function]
 	if !ok {
 		return false
 	}
 	return len(callee.Type().Results()) == 0
 }
 
-// needsBits 报告一个值是否必须按位构造：负零、NaN 和正负无穷。
 func needsBits(v float64) bool {
 	return math.IsNaN(v) || math.IsInf(v, 0) || (v == 0 && math.Signbit(v))
 }
@@ -453,6 +547,9 @@ type stmt struct {
 	Op    string `json:"op"`
 	Name  string `json:"name,omitempty"`
 	Value *expr  `json:"value"`
+	Cond  *expr  `json:"cond"`
+	Then  []stmt `json:"then"`
+	Else  []stmt `json:"else"`
 }
 
 type expr struct {

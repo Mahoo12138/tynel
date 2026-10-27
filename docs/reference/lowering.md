@@ -127,6 +127,16 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 
 `==` 与 `!=` 不是 NIR 运算符，能力检查会先拒绝；如果事实绕过前端直接进来，降低按 `lower.bad-operator` 拒绝。浮点比较的结果见[比较语义](comparison.md)。
 
+## 分支与局部值
+
+`IfStatement` 降成 NIR 的 `if`：条件在**外层作用域**求值一次，`then` 与 `else` 各自降成一个语句块。不带花括号的单条语句也包成只有一个元素的块。`else if` 是 `else` 里再放一条 `if`，条件仍然在外层作用域求值；每条分支的语句块各自开一个子作用域。
+
+函数体内的 `const`（包括分支里的）降成 NIR 的 `let`。骨架是 `VariableStatement → VariableDeclarationList → VariableDeclaration`，声明本身只带一个初始化表达式；本阶段一次只支持声明一个局部值。作用域用声明 ID 做键，沿父链查找：同一个块里重复定义报 `lower.duplicate-name`，子块可以遮蔽父块，退出子块后父块的值重新可见。
+
+未选中的分支也照样降低。`if (false) { ... }` 不会在编译期被裁掉：能力检查已经遍历过它，降低也保留它的语句，运行时由 Go 的 `if` 决定是否执行。
+
+独立语句块 `{ ... }`（不挂在 `if` 上）目前按 `lower.unsupported-statement` 拒绝：NIR 没有裸块语句，扁平化会丢掉作用域。嵌套块通过 `if` 的分支表达。
+
 ## 降低阶段拒绝什么
 
 降低不重复做类型检查，但它不盲信事实。下面这些情况会在降低时报错，并且不返回模块：
@@ -137,15 +147,17 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 | `lower.bad-arity` | 二元运算不是两个操作数、`return` 多个值、实参个数与形参不符 |
 | `lower.bad-operator` | 运算符不在算术、一元 `- +`、`!` 与比较之内（包括宽松 `==` / `!=`） |
 | `lower.bad-unary` | 一元负号作用在非字面量上 |
-| `lower.unknown-name` | 引用的声明不存在，或参数不属于当前函数 |
+| `lower.unknown-name` | 引用的声明不存在、参数不属于当前函数，或局部值不在当前作用域 |
+| `lower.duplicate-name` | 同一个块里重复定义局部值 |
+| `lower.bad-declaration` | 局部声明缺少声明身份、不是 `const`，或一次声明多个值 |
 | `lower.module-const-in-function` | 函数内引用模块级常量（需要全局变量，本阶段没有） |
 | `lower.function-value` | 把函数当值使用 |
 | `lower.unknown-callee` | 调用目标不是本文件里的函数 |
 | `lower.entry-conflict` | 用户函数占用了 `main` |
-| `lower.missing-return` | 返回 `number` 的函数没有以 `return` 结束 |
-| `lower.missing-value` | 返回 `number` 的函数里 `return` 不带值 |
+| `lower.missing-return` | 返回 `number` 或 `boolean` 的函数没有以 `return` 结束 |
+| `lower.missing-value` | 返回 `number` 或 `boolean` 的函数里 `return` 不带值，或局部值缺少初始值 |
 | `lower.void-value` | `void` 函数的 `return` 带返回值 |
-| `lower.unsupported-statement` | 函数体或模块体里出现不支持的语句 |
+| `lower.unsupported-statement` | 函数体或模块体里出现不支持的语句（包括独立语句块） |
 | `lower.unsupported-expr` | 不支持的表达式种类 |
 | `lower.bad-literal` | 数字字面量缺少位模式或位模式非法 |
 

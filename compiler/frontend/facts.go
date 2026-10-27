@@ -48,11 +48,12 @@ const (
 	DeclFunction  DeclKind = "function"
 	DeclParameter DeclKind = "parameter"
 	DeclConst     DeclKind = "const"
+	DeclLocal     DeclKind = "local"
 )
 
 func (k DeclKind) valid() bool {
 	switch k {
-	case DeclFunction, DeclParameter, DeclConst:
+	case DeclFunction, DeclParameter, DeclConst, DeclLocal:
 		return true
 	}
 	return false

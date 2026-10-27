@@ -57,7 +57,7 @@ const doubled: number = scale(answer);
 
 | 部分 | 内容 |
 | --- | --- |
-| `declarations` | 顶层函数、它们的参数、顶层 const |
+| `declarations` | 顶层函数、它们的参数、顶层 const、函数体内的局部 const |
 | `references` | 函数体与初始化表达式里的每一次名称出现，带解析到的声明 ID |
 | `calls` | 函数体与初始化表达式里的调用位置、被调用者 ID、实参类型、结果类型 |
 | `expressions` | 数字字面量、布尔字面量、二元运算、调用和标识符，各带类型摘要 |
@@ -90,6 +90,8 @@ const doubled: number = scale(answer);
 - `name` 与 `target` 只出现在标识符和属性访问上；属性访问的 `name` 是属性名，`children` 只有对象那一侧。
 - 树里只有语句、表达式和变量声明。类型节点（`a: number` 的 `number`）、修饰符、名字令牌都不进树——否则类型名会被当成变量引用。
 - `true` 与 `false` 是 `TrueKeyword` / `FalseKeyword` 节点，类型摘要为 `boolean`。它们没有额外字段，种类本身就区分两个值。
+- 局部 `const` 的 `VariableDeclaration` 带 `decl`（指向 `kind=local` 的声明），`children` 只有初始化表达式。`let` / `var` 不登记声明，`decl` 为 0，能力检查据此拒绝。
+- `IfStatement` 的 `children` 依次是条件、`then` 语句、可选的 `else` 语句；`else if` 是 `else` 位置上的另一个 `IfStatement`。
 
 校验对骨架有预算：深度不超过 100 层、节点不超过 20000 个。超了按内部故障拒绝，避免一段异常深的输入把后续阶段拖垮。
 

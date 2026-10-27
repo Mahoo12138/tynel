@@ -52,7 +52,7 @@ func (f *Facts) Validate() error {
 			if err := requireType("函数 "+d.Name, d.Result, d.Type); err != nil {
 				return err
 			}
-		case DeclParameter, DeclConst:
+		case DeclParameter, DeclConst, DeclLocal:
 			if err := requireType(d.Kind.String()+" "+d.Name, d.Type, d.Result); err != nil {
 				return err
 			}
@@ -208,8 +208,8 @@ func (f *Facts) validateNode(n *Node, depth int, nodes *int) error {
 		if !ok {
 			return diagnostic.New(diagnostic.Internal, "facts.unknown-target", "%s 引用了不存在的声明 ID %d", n.Kind, n.Decl)
 		}
-		if decl.Kind != DeclConst {
-			return diagnostic.New(diagnostic.Internal, "facts.bad-decl-ref", "%s 引用的声明 %q 不是常量", n.Kind, decl.Name)
+		if decl.Kind != DeclConst && decl.Kind != DeclLocal {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-decl-ref", "%s 引用的声明 %q 不是常量或局部值", n.Kind, decl.Name)
 		}
 	}
 	if n.Bits != "" {

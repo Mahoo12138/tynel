@@ -89,9 +89,9 @@ type factsPayload struct {
 
 // Facts 把这次检查的事实导出为 JSON。
 //
-// 事实只覆盖顶层函数与 const：函数签名、参数、const 的声明身份，函数体与
-// 初始化表达式里的名称引用、调用目标和表达式类型。语句结构不在这里，降低
-// 阶段需要时再扩展。
+// 事实覆盖顶层函数与 const，以及函数体内的局部 const：函数签名、参数、
+// 每个声明的身份与类型，函数体与初始化表达式里的名称引用、调用目标和表达式
+// 类型。局部 const 用 kind=local 记录，作用域由降低阶段按语句块重建。
 func (s *Session) Facts() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,10 +281,42 @@ func (b *factBuilder) declareFunction(node *ast.Node) pending {
 // fillFunction 在全部声明登记完之后再处理函数体。
 func (b *factBuilder) fillFunction(item pending) {
 	body := item.node.Body()
+	if body != nil {
+		// 先登记局部 const，再转骨架：VariableDeclaration 节点要靠这些 ID
+		// 指回声明，引用也要能查到同一个 ID。
+		b.declareLocals(body)
+	}
 	b.payload.Declarations[item.index].Body = b.bodyNode(body)
 	if body != nil {
 		b.walk(body)
 	}
+}
+
+// declareLocals 登记函数体里的局部 const。let/var 不登记，骨架里它们的
+// Decl 保持 0，能力检查据此拒绝。
+func (b *factBuilder) declareLocals(node *ast.Node) {
+	if node == nil {
+		return
+	}
+	if ast.IsVariableDeclaration(node) && ast.IsVarConst(node) {
+		if name := node.Name(); name != nil && ast.IsIdentifier(name) {
+			typ := b.typeOf(b.checker.GetTypeAtLocation(name))
+			id := b.declare(b.checker.GetSymbolAtLocation(name))
+			b.payload.Declarations = append(b.payload.Declarations, factDeclaration{
+				ID:     id,
+				Kind:   "local",
+				Name:   name.Text(),
+				Start:  b.startOf(node),
+				Length: node.End() - b.startOf(node),
+				Type:   &typ,
+			})
+			b.declNameNodes[name] = true
+		}
+	}
+	node.ForEachChild(func(child *ast.Node) bool {
+		b.declareLocals(child)
+		return false
+	})
 }
 
 func (b *factBuilder) declareVariable(node *ast.Node) pending {
@@ -451,11 +483,18 @@ func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
 		}
 		out.Bits = fmt.Sprintf("0x%016x", bits)
 	case ast.IsVariableDeclaration(node):
-		// 局部变量不在本阶段的子集里，但它的名字不该被当成引用。
 		if name := node.Name(); name != nil {
 			b.declNameNodes[name] = true
 			out.Decl = b.lookup(b.checker.GetSymbolAtLocation(name))
 		}
+		// 只收初始化表达式。名字本身是声明，不是引用；把它留在 Children 里
+		// 会让降低阶段多出一个无意义的标识符。
+		if init := node.AsVariableDeclaration().Initializer; init != nil {
+			if child := b.bodyNode(init); child != nil {
+				out.Children = append(out.Children, *child)
+			}
+		}
+		return out
 	}
 	node.ForEachChild(func(child *ast.Node) bool {
 		if !isStructure(child) {

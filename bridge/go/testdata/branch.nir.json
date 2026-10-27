@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "pick",
+      "params": [
+        {"name": "flag", "type": "bool"}
+      ],
+      "result": "void",
+      "body": [
+        {
+          "op": "if",
+          "cond": {"op": "param", "name": "flag"},
+          "then": [
+            {"op": "print", "value": {"op": "number", "bits": "0x3ff0000000000000"}}
+          ],
+          "else": [
+            {"op": "print", "value": {"op": "number", "bits": "0x4000000000000000"}}
+          ]
+        },
+        {"op": "return"}
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "discard", "value": {"op": "call", "function": "pick", "args": [{"op": "bool", "value": true}]}},
+        {"op": "discard", "value": {"op": "call", "function": "pick", "args": [{"op": "bool", "value": false}]}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

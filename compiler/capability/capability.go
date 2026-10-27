@@ -64,6 +64,8 @@ func (c *checker) declaration(d *frontend.Declaration) {
 		if d.Body != nil && d.Body.Type != nil && d.Body.Type.Kind == frontend.KindVoid {
 			c.report(d.Body.Start, "cap.void-value", "常量 %q 的初始值是 void 调用，没有可用的值", d.Name)
 		}
+	case frontend.DeclLocal:
+		c.declaredType(d.Type, d.Start, "局部值 %q ", d.Name, frontend.KindNumber, frontend.KindBoolean)
 	}
 }
 
@@ -115,6 +117,51 @@ func (c *checker) node(n *frontend.Node) {
 			return
 		}
 		c.node(&n.Children[0])
+	case "IfStatement":
+		if !c.inFunction {
+			c.report(n.Start, "cap.unsupported-syntax", "模块级 if 不在本阶段子集内")
+			return
+		}
+		if len(n.Children) < 2 || len(n.Children) > 3 {
+			c.report(n.Start, "cap.unsupported-syntax", "if 有 %d 个子节点", len(n.Children))
+			return
+		}
+		c.boolOperand(&n.Children[0], "if 的条件")
+		for i := 1; i < len(n.Children); i++ {
+			c.node(&n.Children[i])
+		}
+	case "VariableStatement":
+		list := variableList(n)
+		if list == nil {
+			c.report(n.Start, "cap.unsupported-syntax", "局部变量语句缺少声明列表")
+			return
+		}
+		if len(list.Children) != 1 {
+			c.report(n.Start, "cap.unsupported-syntax", "本阶段一次只支持声明一个局部值")
+			return
+		}
+		c.node(list)
+	case "VariableDeclarationList":
+		c.children(n)
+	case "VariableDeclaration":
+		if n.Decl == 0 {
+			c.report(n.Start, "cap.unsupported-syntax", "局部 let/var 不在本阶段子集内，只支持 const")
+			return
+		}
+		decl, ok := c.facts.Declaration(n.Decl)
+		if !ok || decl.Kind != frontend.DeclLocal {
+			c.report(n.Start, "cap.unknown-name", "局部变量没有对应的声明")
+			return
+		}
+		if len(n.Children) != 1 {
+			c.report(n.Start, "cap.unsupported-syntax", "局部值 %q 必须有且只有一个初始值", decl.Name)
+			return
+		}
+		if decl.Type == nil {
+			c.report(n.Start, "cap.bad-type", "局部值 %q 缺少类型摘要", decl.Name)
+			return
+		}
+		c.typedOperand(&n.Children[0], decl.Type.Kind, "局部值 "+decl.Name)
 	case "BinaryExpression":
 		if len(n.Children) != 2 {
 			c.report(n.Start, "cap.unsupported-syntax", "二元运算有 %d 个操作数", len(n.Children))
@@ -180,9 +227,7 @@ func (c *checker) node(n *frontend.Node) {
 		c.report(n.Start, "cap.unsupported-syntax", "数组字面量不在本阶段子集内")
 	case "StringLiteral", "NoSubstitutionTemplateLiteral", "TemplateExpression":
 		c.report(n.Start, "cap.unsupported-syntax", "字符串不在本阶段子集内")
-	case "VariableStatement", "VariableDeclaration", "VariableDeclarationList":
-		c.report(n.Start, "cap.unsupported-syntax", "局部变量不在本阶段子集内，顶层只支持 const")
-	case "IfStatement", "WhileStatement", "DoStatement", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "TryStatement", "ThrowStatement":
+	case "WhileStatement", "DoStatement", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "TryStatement", "ThrowStatement":
 		c.report(n.Start, "cap.unsupported-syntax", "控制流 %s 不在本阶段子集内", n.Kind)
 	case "NewExpression":
 		c.report(n.Start, "cap.unsupported-syntax", "new 表达式不在本阶段子集内")
@@ -258,6 +303,9 @@ func (c *checker) identifier(n *frontend.Node) {
 		if c.inFunction {
 			c.report(n.Start, "cap.module-const-in-function", "函数内引用模块常量 %q 需要全局变量，本阶段不支持", n.Name)
 		}
+	case frontend.DeclLocal:
+		// 局部 const 可以在当前块及其子块里读取；越界读取由 TypeScript 报
+		// 「找不到名称」，能力检查不重复做作用域分析。
 	}
 }
 
@@ -345,4 +393,18 @@ func isArithmetic(op string) bool {
 		return true
 	}
 	return false
+}
+
+// variableList 找到 VariableStatement 下的声明列表。骨架可能来自手写事实，
+// 不假设层级一定完整。
+func variableList(n *frontend.Node) *frontend.Node {
+	if n.Kind != "VariableStatement" {
+		return nil
+	}
+	for i := range n.Children {
+		if n.Children[i].Kind == "VariableDeclarationList" {
+			return &n.Children[i]
+		}
+	}
+	return nil
 }

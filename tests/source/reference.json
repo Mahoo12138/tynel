@@ -19,6 +19,10 @@
     "compare": {"comparison": "shared"},
     "compare-specials": {"comparison": "shared"},
     "compare-order": {"comparison": "shared"},
+    "branch": {"comparison": "shared"},
+    "branch-chain": {"comparison": "shared"},
+    "branch-nested": {"comparison": "shared"},
+    "branch-single": {"comparison": "shared"},
     "specials": {
       "comparison": "spelling",
       "note": "无穷在 Tynel 写作 +Inf / -Inf，Node 写作 Infinity / -Infinity；归一拼写后应完全一致"

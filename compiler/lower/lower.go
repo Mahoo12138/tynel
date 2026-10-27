@@ -85,10 +85,45 @@ type lowerer struct {
 }
 
 // scope 是当前可见的声明。用声明 ID 而不是名字做键：两个函数里同名的参数是
-// 两个声明，按名字查会把它们混成一个。
+// 两个声明，按名字查会把它们混成一个。params 只在函数根作用域出现；locals
+// 按语句块分层，子块可以遮蔽父块，退出子块后声明不可见。
 type scope struct {
+	parent *scope
 	params map[int]string
 	locals map[int]string
+}
+
+func (s *scope) child() *scope {
+	return &scope{parent: s, locals: make(map[int]string)}
+}
+
+func (s *scope) lookup(id int) (string, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if name, ok := cur.locals[id]; ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func (s *scope) lookupParam(id int) (string, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.params == nil {
+			continue
+		}
+		if name, ok := cur.params[id]; ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func (s *scope) define(id int, name string) bool {
+	if _, exists := s.locals[id]; exists {
+		return false
+	}
+	s.locals[id] = name
+	return true
 }
 
 func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
@@ -180,16 +215,9 @@ func (l *lowerer) entry() (*nir.Function, error) {
 }
 
 func (l *lowerer) block(block *frontend.Node, sc *scope, result string) ([]nir.Stmt, error) {
-	if block.Kind != "Block" {
-		return nil, l.fail(block.Start, "lower.bad-body", "函数体是 %s，应为 Block", block.Kind)
-	}
-	var body []nir.Stmt
-	for i := range block.Children {
-		stmt, err := l.statement(&block.Children[i], sc)
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, stmt)
+	body, err := l.blockStmts(block, sc)
+	if err != nil {
+		return nil, err
 	}
 	if result == nir.TypeVoid {
 		if len(body) == 0 || body[len(body)-1].Op != nir.OpReturn {
@@ -199,6 +227,23 @@ func (l *lowerer) block(block *frontend.Node, sc *scope, result string) ([]nir.S
 	}
 	if len(body) == 0 || body[len(body)-1].Op != nir.OpReturn {
 		return nil, l.fail(block.Start, "lower.missing-return", "返回 %s 的函数没有以 return 结束", result)
+	}
+	return body, nil
+}
+
+// blockStmts 降低一个语句块，不负责补 return。if 的分支用它：分支里是否
+// 返回由源码决定，补齐函数返回值是函数体自己的事。
+func (l *lowerer) blockStmts(block *frontend.Node, sc *scope) ([]nir.Stmt, error) {
+	if block.Kind != "Block" {
+		return nil, l.fail(block.Start, "lower.bad-body", "语句块是 %s，应为 Block", block.Kind)
+	}
+	var body []nir.Stmt
+	for i := range block.Children {
+		stmt, err := l.statement(&block.Children[i], sc)
+		if err != nil {
+			return nil, err
+		}
+		body = append(body, stmt)
 	}
 	return body, nil
 }
@@ -252,9 +297,107 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
 			return nir.Stmt{}, err
 		}
 		return nir.Stmt{Op: nir.OpDiscard, Value: value, Pos: l.pos(stmt.Start)}, nil
+	case "IfStatement":
+		return l.ifStatement(stmt, sc)
+	case "VariableStatement":
+		return l.localDeclaration(stmt, sc)
+	case "Block":
+		return nir.Stmt{}, l.fail(stmt.Start, "lower.unsupported-statement", "独立语句块不在本阶段子集内")
 	default:
 		return nir.Stmt{}, l.fail(stmt.Start, "lower.unsupported-statement", "语句 %s 不在本阶段子集内", stmt.Kind)
 	}
+}
+
+// ifStatement 降低 if / else / else if。条件在调用方的作用域里求值一次；
+// 两条分支各自开一个子作用域，分支里的 let 不会泄漏到外面。
+func (l *lowerer) ifStatement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
+	if len(stmt.Children) < 2 || len(stmt.Children) > 3 {
+		return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-arity", "if 有 %d 个子节点", len(stmt.Children))
+	}
+	condNode := &stmt.Children[0]
+	if err := l.typedOperand(condNode, frontend.KindBoolean, "if 的条件"); err != nil {
+		return nir.Stmt{}, err
+	}
+	cond, err := l.expr(condNode, sc, 1)
+	if err != nil {
+		return nir.Stmt{}, err
+	}
+	then, err := l.branchStmts(&stmt.Children[1], sc.child())
+	if err != nil {
+		return nir.Stmt{}, err
+	}
+	var els []nir.Stmt
+	if len(stmt.Children) == 3 {
+		els, err = l.branchStmts(&stmt.Children[2], sc.child())
+		if err != nil {
+			return nir.Stmt{}, err
+		}
+	}
+	return nir.Stmt{Op: nir.OpIf, Cond: cond, Then: then, Else: els, Pos: l.pos(stmt.Start)}, nil
+}
+
+// branchStmts 降低一条分支。带花括号的分支是 Block；单条语句（包括 else if）
+// 也合法，包成只有一个元素的语句列表。
+func (l *lowerer) branchStmts(node *frontend.Node, sc *scope) ([]nir.Stmt, error) {
+	if node.Kind == "Block" {
+		return l.blockStmts(node, sc)
+	}
+	stmt, err := l.statement(node, sc)
+	if err != nil {
+		return nil, err
+	}
+	return []nir.Stmt{stmt}, nil
+}
+
+// localDeclaration 降低分支里的局部 const。骨架是
+// VariableStatement → VariableDeclarationList → VariableDeclaration，声明本身
+// 只带一个初始化表达式。
+func (l *lowerer) localDeclaration(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
+	list := variableList(stmt)
+	if list == nil {
+		return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-declaration", "局部变量语句缺少声明列表")
+	}
+	if len(list.Children) != 1 || list.Children[0].Kind != "VariableDeclaration" {
+		return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-declaration", "本阶段只支持一次声明一个局部值")
+	}
+	declNode := &list.Children[0]
+	if declNode.Decl == 0 {
+		return nir.Stmt{}, l.fail(declNode.Start, "lower.bad-declaration", "局部变量缺少声明身份；只支持 const")
+	}
+	decl, ok := l.facts.Declaration(declNode.Decl)
+	if !ok || decl.Kind != frontend.DeclLocal {
+		return nir.Stmt{}, l.fail(declNode.Start, "lower.bad-declaration", "局部变量的声明身份 %d 不对", declNode.Decl)
+	}
+	if decl.Type == nil || (decl.Type.Kind != frontend.KindNumber && decl.Type.Kind != frontend.KindBoolean) {
+		return nir.Stmt{}, l.fail(decl.Start, "lower.bad-type", "局部值 %q 不是 number 或 boolean", decl.Name)
+	}
+	if len(declNode.Children) != 1 {
+		return nir.Stmt{}, l.fail(declNode.Start, "lower.missing-value", "局部值 %q 缺少初始值", decl.Name)
+	}
+	init := &declNode.Children[0]
+	if err := l.typedOperand(init, decl.Type.Kind, "局部值 "+decl.Name); err != nil {
+		return nir.Stmt{}, err
+	}
+	value, err := l.expr(init, sc, 1)
+	if err != nil {
+		return nir.Stmt{}, err
+	}
+	if !sc.define(decl.ID, decl.Name) {
+		return nir.Stmt{}, l.fail(decl.Start, "lower.duplicate-name", "局部值 %q 在同一个块里重复定义", decl.Name)
+	}
+	return nir.Stmt{Op: nir.OpLet, Name: decl.Name, Value: value, Pos: l.pos(stmt.Start)}, nil
+}
+
+func variableList(stmt *frontend.Node) *frontend.Node {
+	if stmt.Kind != "VariableStatement" {
+		return nil
+	}
+	for i := range stmt.Children {
+		if stmt.Children[i].Kind == "VariableDeclarationList" {
+			return &stmt.Children[i]
+		}
+	}
+	return nil
 }
 
 // consoleLog 识别 console.log(x) 并返回实参。ok=false 表示这不是一次受限输出。
@@ -331,15 +474,21 @@ func (l *lowerer) identifier(n *frontend.Node, sc *scope) (*nir.Expr, error) {
 	}
 	switch decl.Kind {
 	case frontend.DeclParameter:
-		name, ok := sc.params[decl.ID]
+		name, ok := sc.lookupParam(decl.ID)
 		if !ok {
 			return nil, l.fail(n.Start, "lower.unknown-name", "参数 %q 不属于当前函数", n.Name)
 		}
 		return &nir.Expr{Op: nir.OpParam, Name: name, Pos: l.pos(n.Start)}, nil
 	case frontend.DeclConst:
-		name, ok := sc.locals[decl.ID]
+		name, ok := sc.lookup(decl.ID)
 		if !ok {
 			return nil, l.fail(n.Start, "lower.module-const-in-function", "模块常量 %q 在函数内不可见", n.Name)
+		}
+		return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil
+	case frontend.DeclLocal:
+		name, ok := sc.lookup(decl.ID)
+		if !ok {
+			return nil, l.fail(n.Start, "lower.unknown-name", "局部值 %q 不在当前作用域内", n.Name)
 		}
 		return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil
 	default:

@@ -52,15 +52,17 @@ function neverCalled(): number {
 
 | 类别 | 支持 | 说明 |
 | --- | --- | --- |
-| 声明 | `function`、参数、顶层 `const` | 参数与常量限 `number`、`boolean`，返回值限 `number`、`boolean` 或 `void` |
+| 声明 | `function`、参数、顶层 `const`、函数体内 `const` | 参数与常量限 `number`、`boolean`，返回值限 `number`、`boolean` 或 `void` |
 | 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!`，比较 `<` `<=` `>` `>=` `===` `!==` | 有序比较只接受 `number`；严格相等要求两侧同类型；宽松 `==` / `!=` 拒绝 |
 | 调用 | 本文件内声明的函数，实参个数与形参一致 | 不支持函数值、方法调用 |
-| 语句 | `return`、表达式语句、语句块 | 表达式语句的结果被丢弃，见下 |
+| 语句 | `return`、表达式语句、语句块、`if` / `else` / `else if`、分支内 `const` | 表达式语句的结果被丢弃；`if` 的条件必须是 `boolean` |
 | 输出 | `console.log(<number 或 boolean>)` | 必须是内置 `console`，见下 |
 
 `boolean` 现在是完整的标量：可以作为常量、参数、返回值和输出。`!` 只对 `boolean` 取反；TypeScript 允许 `!1`，但本阶段不把数字的真假转换带进原生后端，`!1` 按 `cap.bad-type` 拒绝。
 
 比较分两类：`<` `<=` `>` `>=` 只接受两个 `number`；`===` `!==` 要求两侧同为 `number` 或同为 `boolean`。`==` 与 `!=` 是合法 TypeScript，但会做隐式类型转换，本阶段按 `cap.bad-operator` 拒绝。`true < false` 在 TypeScript 里能通过，能力检查按 `cap.bad-type` 拒绝——布尔值没有原生顺序。混合类型比较（`1 === true`）由 TypeScript 直接拒绝。
+
+分支支持 `if`、`else`、`else if` 和嵌套分支。条件必须是 `boolean`；`if (1)` 在 TypeScript 里合法，能力检查按 `cap.bad-type` 拒绝。函数体内可以声明 `const`，作用域是所在的块；局部 `let` 还没有赋值语义，按 `cap.unsupported-syntax` 拒绝。能力检查会遍历未选中的分支，`if (false) { ... }` 里的未实现写法同样拒绝。
 
 ## void 与丢弃结果
 
@@ -86,7 +88,7 @@ const x = announce(1);     // 拒绝：void 没有值可以绑
 | --- | --- |
 | `cap.any` | 参数、返回值或常量声明为 `any` / `unknown` |
 | `cap.type-escape` | `as`、`<T>x`、后缀 `!`（非空断言）、`satisfies` 这类绕过检查的写法 |
-| `cap.unsupported-syntax` | 对象、数组、字符串、控制流、局部变量、`new`、嵌套函数等本阶段不支持的语法 |
+| `cap.unsupported-syntax` | 对象、数组、字符串、循环、局部 `let`、`new`、嵌套函数等本阶段不支持的语法 |
 | `cap.unknown-callee` | 调用目标不是本文件声明的函数，也不是 `console.log` |
 | `cap.forbidden-global` | 调用 `eval` |
 | `cap.shadowed-console` | `console` 被本文件的声明遮蔽 |
@@ -95,7 +97,7 @@ const x = announce(1);     // 拒绝：void 没有值可以绑
 | `cap.unknown-name` | 引用了本文件之外的名称 |
 | `cap.arg-count` | 实参个数与函数声明的形参个数不一致 |
 | `cap.void-value` | 把 void 调用当作值使用：实参、操作数、返回值、常量初始值 |
-| `cap.bad-type` | 声明的类型不在本阶段范围内，例如 `string` 参数；或 `!` 的操作数不是 `boolean` |
+| `cap.bad-type` | 声明的类型不在本阶段范围内，例如 `string` 参数；或 `!` 的操作数不是 `boolean`、`if` 的条件不是 `boolean` |
 
 错误消息里带着具体的写法名（`对象字面量`、`控制流 IfStatement`），因为「不支持」这三个字本身不提供任何线索。
 

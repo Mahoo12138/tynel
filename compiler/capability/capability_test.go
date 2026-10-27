@@ -397,6 +397,50 @@ func TestConsoleCall(t *testing.T) {
 	wantCode(t, check(t, facts), "cap.bad-console-call")
 }
 
+// TestIfAndLocalConst 覆盖 if 条件、分支内 const 与局部 let 的能力规则。
+func TestIfAndLocalConst(t *testing.T) {
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	number := frontend.Type{Kind: frontend.KindNumber}
+	void := frontend.Type{Kind: frontend.KindVoid}
+
+	facts := base()
+	facts.Declarations[0].Result = &void
+	facts.Declarations[1].Type = &boolean
+	facts.Declarations = append(facts.Declarations,
+		frontend.Declaration{ID: 4, Kind: frontend.DeclLocal, Name: "x", Start: 30, Length: 1, Type: &number},
+	)
+	then := node("Block",
+		variableStatement(4, typed("NumericLiteral", frontend.KindNumber)),
+		node("ExpressionStatement", consoleLog(ident("x", 4))),
+	)
+	elseBlock := node("Block", node("ExpressionStatement", consoleLog(ident("b", 3))))
+	body := node("Block", node("IfStatement", boolIdent("a", 2), then, elseBlock))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("if 与局部 const 应通过，实际 %v", codes(findings))
+	}
+
+	// 数字条件。
+	facts = base()
+	facts.Declarations[0].Result = &void
+	body = node("Block", node("IfStatement", typed("NumericLiteral", frontend.KindNumber), node("Block")))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	// 局部 let：骨架里没有声明身份。
+	facts = base()
+	facts.Declarations[0].Result = &void
+	body = node("Block", variableStatement(0, typed("NumericLiteral", frontend.KindNumber)))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.unsupported-syntax")
+}
+
+func variableStatement(declID int, init frontend.Node) frontend.Node {
+	decl := node("VariableDeclaration", init)
+	decl.Decl = declID
+	return node("VariableStatement", node("VariableDeclarationList", decl))
+}
+
 func TestCallArgumentCountIsChecked(t *testing.T) {
 	facts := base()
 	body := node("Block", node("ExpressionStatement", node("CallExpression", ident("add", 1))))
@@ -421,4 +465,8 @@ func propertyAccess(name string, object frontend.Node) frontend.Node {
 	n := typed("PropertyAccessExpression", frontend.KindVoid, object)
 	n.Name = name
 	return n
+}
+
+func consoleLog(arg frontend.Node) frontend.Node {
+	return typed("CallExpression", frontend.KindVoid, propertyAccess("log", ident("console", 0)), arg)
 }

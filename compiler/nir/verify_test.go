@@ -27,6 +27,13 @@ func ret(e Expr) Stmt       { return Stmt{Op: OpReturn, Value: &e} }
 func retVoid() Stmt         { return Stmt{Op: OpReturn} }
 func printStmt(e Expr) Stmt { return Stmt{Op: OpPrint, Value: &e} }
 func discard(e Expr) Stmt   { return Stmt{Op: OpDiscard, Value: &e} }
+func letStmt(name string, e Expr) Stmt {
+	return Stmt{Op: OpLet, Name: name, Value: &e}
+}
+func local(name string) Expr { return Expr{Op: OpLocal, Name: name} }
+func ifStmt(cond Expr, then, els []Stmt) Stmt {
+	return Stmt{Op: OpIf, Cond: &cond, Then: then, Else: els}
+}
 
 func fn(name, result string, params []string, body ...Stmt) Function {
 	f := Function{Name: name, Result: result, Body: body}
@@ -140,6 +147,35 @@ func TestVerifyComparisonModule(t *testing.T) {
 	}
 }
 
+// TestVerifyIfScopes 覆盖分支作用域：两条分支各自定义同名的 x，互不影响；
+// 嵌套块可以遮蔽外层的 x。
+func TestVerifyIfScopes(t *testing.T) {
+	branch := Function{
+		Name:   "branch",
+		Result: TypeVoid,
+		Params: []Param{{Name: "flag", Type: TypeBool}},
+		Body: []Stmt{
+			ifStmt(param("flag"),
+				[]Stmt{letStmt("x", num(1)), printStmt(local("x"))},
+				[]Stmt{letStmt("x", num(2)), printStmt(local("x"))},
+			),
+			letStmt("x", num(3)),
+			ifStmt(boolLit(true),
+				[]Stmt{letStmt("x", num(4)), printStmt(local("x"))},
+				nil,
+			),
+			printStmt(local("x")),
+			retVoid(),
+		},
+	}
+	m := module("main", branch,
+		mainWith(discard(call("branch", boolLit(true))), retVoid()),
+	)
+	if err := Verify(m); err != nil {
+		t.Fatalf("分支作用域模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -150,6 +186,8 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		Params: []Param{{Name: "value", Type: TypeBool}},
 		Body:   []Stmt{ret(not(param("value")))},
 	}
+	ifWithValueCond := boolLit(true)
+	ifWithValue := num(1)
 
 	cases := []struct {
 		name   string
@@ -175,6 +213,17 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		{"有序比较收到 boolean", module("main", mainWith(printStmt(compare("<", boolLit(true), num(1))))), "nir.operand-type"},
 		{"严格相等两侧类型不同", module("main", mainWith(printStmt(compare("===", num(1), boolLit(true))))), "nir.operand-type"},
 		{"宽松相等不是 NIR 运算符", module("main", mainWith(printStmt(compare("==", num(1), num(1))))), "nir.bad-op"},
+		{"if 的条件不是 bool", module("main", mainWith(ifStmt(num(1), []Stmt{retVoid()}, nil))), "nir.condition-type"},
+		{"分支内局部值在块外不可见", module("main", mainWith(
+			ifStmt(boolLit(true), []Stmt{letStmt("x", num(1))}, nil),
+			printStmt(local("x")),
+		)), "nir.unknown-local"},
+		{"同一个块里重复定义", module("main", mainWith(
+			letStmt("x", num(1)),
+			letStmt("x", num(2)),
+		)), "nir.duplicate-name"},
+		{"if 缺少条件", module("main", mainWith(Stmt{Op: OpIf, Then: []Stmt{retVoid()}})), "nir.missing"},
+		{"if 不接受 value", module("main", mainWith(Stmt{Op: OpIf, Cond: &ifWithValueCond, Value: &ifWithValue})), "nir.unexpected-field"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

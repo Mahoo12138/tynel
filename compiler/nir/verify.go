@@ -64,17 +64,34 @@ type checker struct {
 // function 检查一个函数体。返回值类型与参数表在这一层确定，表达式只做类型
 // 推导，不生成任何东西。
 func (c *checker) function(f *Function) error {
-	sc := &scope{params: make(map[string]string, len(f.Params)), locals: make(map[string]string)}
+	root := &scope{params: make(map[string]string, len(f.Params)), names: make(map[string]string)}
 	for i := range f.Params {
 		p := &f.Params[i]
-		if _, exists := sc.params[p.Name]; exists {
+		if _, exists := root.params[p.Name]; exists {
 			return failAt("nir.duplicate-name", p.Pos, "函数 %q 的参数 %q 重复", f.Name, p.Name)
 		}
-		sc.params[p.Name] = p.Type
+		root.params[p.Name] = p.Type
 	}
 
-	for i := range f.Body {
-		s := &f.Body[i]
+	// 函数体与参数共用最外层作用域：函数体顶层再 let 一个同名值属于重复声明，
+	// 嵌套块里的同名 let 才是遮蔽。
+	if err := c.stmts(f.Body, root, f); err != nil {
+		return err
+	}
+
+	// 03.03 仍要求有值函数的最后一条语句是 return；完整路径分析在 03.04。
+	if f.Result != TypeVoid {
+		if len(f.Body) == 0 || f.Body[len(f.Body)-1].Op != OpReturn {
+			return failAt("nir.missing-return", f.Pos, "函数 %q 返回 %s，但函数体没有以 return 结束", f.Name, f.Result)
+		}
+	}
+	return nil
+}
+
+// stmts 检查一个语句块。sc 是该块的可见名字；if 的两条分支各自开一个子作用域。
+func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
+	for i := range stmts {
+		s := &stmts[i]
 		switch s.Op {
 		case OpReturn:
 			if f.Result == TypeVoid {
@@ -114,30 +131,65 @@ func (c *checker) function(f *Function) error {
 			if got != TypeNumber && got != TypeBool {
 				return failAt("nir.local-type", s.Pos, "let %q 的值必须是 number 或 bool，实际为 %s", s.Name, got)
 			}
+			if _, exists := sc.names[s.Name]; exists {
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 重复定义", f.Name, s.Name)
+			}
 			if _, exists := sc.params[s.Name]; exists {
-				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 重复定义", f.Name, s.Name)
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 与参数重复", f.Name, s.Name)
 			}
-			if _, exists := sc.locals[s.Name]; exists {
-				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 重复定义", f.Name, s.Name)
+			sc.names[s.Name] = got
+		case OpIf:
+			got, err := c.exprType(s.Cond, sc)
+			if err != nil {
+				return err
 			}
-			sc.locals[s.Name] = got
-		}
-	}
-
-	// 首版没有分支，函数体的最后一条语句决定是否有返回值。
-	if f.Result != TypeVoid {
-		if len(f.Body) == 0 || f.Body[len(f.Body)-1].Op != OpReturn {
-			return failAt("nir.missing-return", f.Pos, "函数 %q 返回 %s，但函数体没有以 return 结束", f.Name, f.Result)
+			if got != TypeBool {
+				return failAt("nir.condition-type", s.Pos, "if 的条件必须是 bool，实际为 %s", got)
+			}
+			if err := c.stmts(s.Then, sc.child(), f); err != nil {
+				return err
+			}
+			if len(s.Else) > 0 {
+				if err := c.stmts(s.Else, sc.child(), f); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
 }
 
-// scope 是函数体内的可见名字与它们的类型。参数与局部值分开记：前者由调用方
-// 提供，后者必须由前面的 let 定义过。
+// scope 是语句块内的可见名字。params 只在函数根作用域非空；names 是当前块
+// 的局部值。子块可以遮蔽父块，但同名声明不能出现在同一个块里。
 type scope struct {
+	parent *scope
 	params map[string]string
-	locals map[string]string
+	names  map[string]string
+}
+
+func (s *scope) child() *scope {
+	return &scope{parent: s, names: make(map[string]string)}
+}
+
+func (s *scope) lookupLocal(name string) (string, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if t, ok := cur.names[name]; ok {
+			return t, true
+		}
+	}
+	return "", false
+}
+
+func (s *scope) lookupParam(name string) (string, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.params == nil {
+			continue
+		}
+		if t, ok := cur.params[name]; ok {
+			return t, true
+		}
+	}
+	return "", false
 }
 
 // exprType 推导表达式类型。返回 TypeNumber、TypeBool 或 TypeVoid（void 调用）。
@@ -154,13 +206,13 @@ func (c *checker) exprType(e *Expr, sc *scope) (string, error) {
 		}
 		return TypeBool, nil
 	case OpParam:
-		t, ok := sc.params[e.Name]
+		t, ok := sc.lookupParam(e.Name)
 		if !ok {
 			return "", failAt("nir.unknown-param", e.Pos, "引用了不存在的参数 %q", e.Name)
 		}
 		return t, nil
 	case OpLocal:
-		t, ok := sc.locals[e.Name]
+		t, ok := sc.lookupLocal(e.Name)
 		if !ok {
 			return "", failAt("nir.unknown-local", e.Pos, "引用了尚未定义的局部值 %q", e.Name)
 		}

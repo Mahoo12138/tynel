@@ -192,16 +192,34 @@ func (m *Module) check(limits Limits) error {
 			}
 			nodes++
 		}
-		for j := range f.Body {
-			s := &f.Body[j]
-			spath := fmt.Sprintf("%s.body[%d]", path, j)
-			nodes++
-			switch s.Op {
-			case OpReturn, OpPrint, OpLet, OpDiscard:
-			case "":
-				return badf("nir.missing", "%s 缺少 op", spath)
-			default:
-				return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let 或 discard", spath, s.Op)
+		if err := checkStmts(f.Body, path+".body", 1, &nodes, limits, make(map[*Stmt]bool)); err != nil {
+			return err
+		}
+	}
+	if nodes > limits.MaxNodes {
+		return badf("nir.budget", "节点总数 %d 超过预算 %d", nodes, limits.MaxNodes)
+	}
+	return nil
+}
+
+// checkStmts 递归检查一个语句块。语句同样必须是树：共享或循环的块会让任何
+// 遍历都不终止，所以在进入之前先按指针去重。
+func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Limits, seen map[*Stmt]bool) error {
+	if depth > limits.MaxDepth {
+		return badf("nir.budget", "%s 的语句块嵌套超过预算 %d", rootPath, limits.MaxDepth)
+	}
+	for j := range stmts {
+		s := &stmts[j]
+		spath := fmt.Sprintf("%s[%d]", rootPath, j)
+		if seen[s] {
+			return badf("nir.cycle", "%s 重复引用了同一条语句（共享或循环）", spath)
+		}
+		seen[s] = true
+		*nodes++
+		switch s.Op {
+		case OpReturn, OpPrint, OpLet, OpDiscard:
+			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 {
+				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 cond、then 或 else", spath, s.Op)
 			}
 			if s.Op != OpLet && s.Name != "" {
 				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 name", spath, s.Op)
@@ -221,14 +239,36 @@ func (m *Module) check(limits Limits) error {
 				}
 			}
 			if s.Value != nil {
-				if err := checkExpr(s.Value, spath+".value", 1, &nodes, limits); err != nil {
+				if err := checkExpr(s.Value, spath+".value", 1, nodes, limits); err != nil {
 					return err
 				}
 			}
+		case OpIf:
+			if s.Cond == nil {
+				return badf("nir.missing", "%s 的 if 缺少 cond", spath)
+			}
+			if s.Name != "" {
+				return badf("nir.unexpected-field", "%s（op=if）不接受字段 name", spath)
+			}
+			if s.Value != nil {
+				return badf("nir.unexpected-field", "%s（op=if）不接受字段 value", spath)
+			}
+			if err := checkExpr(s.Cond, spath+".cond", 1, nodes, limits); err != nil {
+				return err
+			}
+			if err := checkStmts(s.Then, spath+".then", depth+1, nodes, limits, seen); err != nil {
+				return err
+			}
+			if len(s.Else) > 0 {
+				if err := checkStmts(s.Else, spath+".else", depth+1, nodes, limits, seen); err != nil {
+					return err
+				}
+			}
+		case "":
+			return badf("nir.missing", "%s 缺少 op", spath)
+		default:
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard 或 if", spath, s.Op)
 		}
-	}
-	if nodes > limits.MaxNodes {
-		return badf("nir.budget", "节点总数 %d 超过预算 %d", nodes, limits.MaxNodes)
 	}
 	return nil
 }

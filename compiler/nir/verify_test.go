@@ -34,6 +34,9 @@ func local(name string) Expr { return Expr{Op: OpLocal, Name: name} }
 func ifStmt(cond Expr, then, els []Stmt) Stmt {
 	return Stmt{Op: OpIf, Cond: &cond, Then: then, Else: els}
 }
+func shortStmt(name, op string, left Expr, right []Stmt, value Expr) Stmt {
+	return Stmt{Op: OpShort, Name: name, Operator: op, Left: &left, Right: right, Value: &value}
+}
 
 func fn(name, result string, params []string, body ...Stmt) Function {
 	f := Function{Name: name, Result: result, Body: body}
@@ -251,6 +254,25 @@ func TestVerifyReturnPaths(t *testing.T) {
 	}
 }
 
+// TestVerifyShortCircuit 覆盖短路结果绑定：&& 与 || 的结果是 bool，右侧的
+// 局部值只在 right 块里可见，嵌套 short 的结果可以继续使用。
+func TestVerifyShortCircuit(t *testing.T) {
+	m := module("main", mainWith(
+		shortStmt("t1", "&&", boolLit(true), nil, boolLit(false)),
+		printStmt(local("t1")),
+		ifStmt(local("t1"), []Stmt{printStmt(num(1))}, nil),
+		shortStmt("t2", "||", boolLit(false),
+			[]Stmt{shortStmt("t3", "&&", boolLit(true), nil, boolLit(true))},
+			local("t3"),
+		),
+		printStmt(local("t2")),
+		retVoid(),
+	))
+	if err := Verify(m); err != nil {
+		t.Fatalf("短路模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -299,6 +321,22 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		)), "nir.duplicate-name"},
 		{"if 缺少条件", module("main", mainWith(Stmt{Op: OpIf, Then: []Stmt{retVoid()}})), "nir.missing"},
 		{"if 不接受 value", module("main", mainWith(Stmt{Op: OpIf, Cond: &ifWithValueCond, Value: &ifWithValue})), "nir.unexpected-field"},
+		{"short 左侧不是 bool", module("main", mainWith(shortStmt("t", "&&", num(1), nil, boolLit(true)))), "nir.operand-type"},
+		{"short 右侧不是 bool", module("main", mainWith(shortStmt("t", "&&", boolLit(true), nil, num(1)))), "nir.operand-type"},
+		{"short 的结果名重复", module("main", mainWith(
+			letStmt("t", num(1)),
+			shortStmt("t", "&&", boolLit(true), nil, boolLit(false)),
+		)), "nir.duplicate-name"},
+		{"short 右侧局部值泄漏", module("main", mainWith(
+			shortStmt("t", "&&", boolLit(true), []Stmt{letStmt("x", boolLit(true))}, local("x")),
+			printStmt(local("x")),
+		)), "nir.unknown-local"},
+		{"short 右侧不接受 return", module("main", mainWith(
+			shortStmt("t", "&&", boolLit(true), []Stmt{retVoid()}, boolLit(true)),
+		)), "nir.bad-op"},
+		{"short 缺少 value", module("main", mainWith(
+			Stmt{Op: OpShort, Name: "t", Operator: "&&", Left: &ifWithValueCond},
+		)), "nir.missing"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

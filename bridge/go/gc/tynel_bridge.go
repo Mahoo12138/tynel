@@ -376,6 +376,39 @@ func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {
 			}
 		}
 		return ir.NewIfStmt(b.pos, cond, then, els), nil
+	case "short":
+		if s.Name == "" || s.Left == nil || s.Value == nil {
+			return nil, fmt.Errorf("short 缺少 name、left 或 value")
+		}
+		if s.Operator != "&&" && s.Operator != "||" {
+			return nil, fmt.Errorf("short 的运算符 %q 不支持", s.Operator)
+		}
+		left, err := b.expr(s.Left, sc)
+		if err != nil {
+			return nil, err
+		}
+		// 结果先落在 bool 局部值里；右侧的准备工作与右值只在需要时执行，
+		// 执行完再把结果写回同一个局部值。
+		local := b.newLocal(s.Name, types.Types[types.TBOOL])
+		sc.define(s.Name, local)
+		rightScope := sc.child()
+		right, err := b.stmts(s.Right, rightScope)
+		if err != nil {
+			return nil, err
+		}
+		value, err := b.expr(s.Value, rightScope)
+		if err != nil {
+			return nil, err
+		}
+		var cond ir.Node = local
+		if s.Operator == "||" {
+			cond = ir.NewUnaryExpr(b.pos, ir.ONOT, local)
+		}
+		rightBody := append(right, ir.NewAssignStmt(b.pos, local, value))
+		return ir.NewBlockStmt(b.pos, []ir.Node{
+			ir.NewAssignStmt(b.pos, local, left),
+			ir.NewIfStmt(b.pos, cond, rightBody, nil),
+		}), nil
 	default:
 		return nil, fmt.Errorf("不支持的语句 op %q", s.Op)
 	}
@@ -570,12 +603,15 @@ type param struct {
 }
 
 type stmt struct {
-	Op    string `json:"op"`
-	Name  string `json:"name,omitempty"`
-	Value *expr  `json:"value"`
-	Cond  *expr  `json:"cond"`
-	Then  []stmt `json:"then"`
-	Else  []stmt `json:"else"`
+	Op       string `json:"op"`
+	Name     string `json:"name,omitempty"`
+	Value    *expr  `json:"value"`
+	Cond     *expr  `json:"cond"`
+	Then     []stmt `json:"then"`
+	Else     []stmt `json:"else"`
+	Operator string `json:"operator"`
+	Left     *expr  `json:"left"`
+	Right    []stmt `json:"right"`
 }
 
 type expr struct {

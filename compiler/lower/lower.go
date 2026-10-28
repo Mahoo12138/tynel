@@ -82,6 +82,7 @@ type lowerer struct {
 	facts    *frontend.Facts
 	names    map[int]string // 函数声明 ID → NIR 函数名
 	result   string         // 当前正在降低的函数的返回类型
+	temp     int            // 短路结果与实参物化的临时名序号
 }
 
 // scope 是当前可见的声明。用声明 ID 而不是名字做键：两个函数里同名的参数是
@@ -194,10 +195,11 @@ func (l *lowerer) entry() (*nir.Function, error) {
 			if err := l.typedOperand(decl.Body, decl.Type.Kind, "常量 "+decl.Name+" "); err != nil {
 				return nil, err
 			}
-			value, err := l.expr(decl.Body, sc, 1)
+			value, pre, err := l.expr(decl.Body, sc, 1)
 			if err != nil {
 				return nil, err
 			}
+			fn.Body = append(fn.Body, pre...)
 			fn.Body = append(fn.Body, nir.Stmt{Op: nir.OpLet, Name: decl.Name, Value: value, Pos: l.pos(stmt.Start)})
 			sc.locals[decl.ID] = decl.Name
 		case "ExpressionStatement":
@@ -205,7 +207,7 @@ func (l *lowerer) entry() (*nir.Function, error) {
 			if err != nil {
 				return nil, err
 			}
-			fn.Body = append(fn.Body, stmt)
+			fn.Body = append(fn.Body, stmt...)
 		default:
 			return nil, l.fail(stmt.Start, "lower.unsupported-statement", "模块级语句 %s 不在本阶段子集内", stmt.Kind)
 		}
@@ -246,97 +248,97 @@ func (l *lowerer) blockStmts(block *frontend.Node, sc *scope) ([]nir.Stmt, error
 		if err != nil {
 			return nil, err
 		}
-		body = append(body, stmt)
+		body = append(body, stmt...)
 	}
 	return body, nil
 }
 
-func (l *lowerer) statement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
+func (l *lowerer) statement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) {
 	switch stmt.Kind {
 	case "ReturnStatement":
 		if len(stmt.Children) == 0 {
 			if l.result != nir.TypeVoid {
-				return nir.Stmt{}, l.fail(stmt.Start, "lower.missing-value", "返回 %s 的函数里 return 必须带值", l.result)
+				return nil, l.fail(stmt.Start, "lower.missing-value", "返回 %s 的函数里 return 必须带值", l.result)
 			}
-			return nir.Stmt{Op: nir.OpReturn, Pos: l.pos(stmt.Start)}, nil
+			return []nir.Stmt{{Op: nir.OpReturn, Pos: l.pos(stmt.Start)}}, nil
 		}
 		if len(stmt.Children) > 1 {
-			return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-arity", "return 有 %d 个值", len(stmt.Children))
+			return nil, l.fail(stmt.Start, "lower.bad-arity", "return 有 %d 个值", len(stmt.Children))
 		}
 		if l.result == nir.TypeVoid {
-			return nir.Stmt{}, l.fail(stmt.Start, "lower.void-value", "void 函数的 return 不能带返回值")
+			return nil, l.fail(stmt.Start, "lower.void-value", "void 函数的 return 不能带返回值")
 		}
 		if err := l.typedOperand(&stmt.Children[0], kindOf(l.result), "返回值"); err != nil {
-			return nir.Stmt{}, err
+			return nil, err
 		}
-		value, err := l.expr(&stmt.Children[0], sc, 1)
+		value, pre, err := l.expr(&stmt.Children[0], sc, 1)
 		if err != nil {
-			return nir.Stmt{}, err
+			return nil, err
 		}
-		return nir.Stmt{Op: nir.OpReturn, Value: value, Pos: l.pos(stmt.Start)}, nil
+		return append(pre, nir.Stmt{Op: nir.OpReturn, Value: value, Pos: l.pos(stmt.Start)}), nil
 	case "ExpressionStatement":
 		if len(stmt.Children) != 1 {
-			return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-arity", "表达式语句有 %d 个子节点", len(stmt.Children))
+			return nil, l.fail(stmt.Start, "lower.bad-arity", "表达式语句有 %d 个子节点", len(stmt.Children))
 		}
 		inner := &stmt.Children[0]
 		arg, ok, err := l.consoleLog(inner)
 		if err != nil {
-			return nir.Stmt{}, err
+			return nil, err
 		}
 		if ok {
 			if arg.Type == nil || (arg.Type.Kind != frontend.KindNumber && arg.Type.Kind != frontend.KindBoolean) {
-				return nir.Stmt{}, l.fail(arg.Start, "lower.bad-type", "console.log 的参数不是 number 或 boolean")
+				return nil, l.fail(arg.Start, "lower.bad-type", "console.log 的参数不是 number 或 boolean")
 			}
-			value, err := l.expr(arg, sc, 1)
+			value, pre, err := l.expr(arg, sc, 1)
 			if err != nil {
-				return nir.Stmt{}, err
+				return nil, err
 			}
-			return nir.Stmt{Op: nir.OpPrint, Value: value, Pos: l.pos(stmt.Start)}, nil
+			return append(pre, nir.Stmt{Op: nir.OpPrint, Value: value, Pos: l.pos(stmt.Start)}), nil
 		}
 		// 其余表达式语句求值后丢弃结果：`f();` 的副作用要保留，`answer;`
 		// 不打印任何东西。两条要求都落在 discard 上。
-		value, err := l.expr(inner, sc, 1)
+		value, pre, err := l.expr(inner, sc, 1)
 		if err != nil {
-			return nir.Stmt{}, err
+			return nil, err
 		}
-		return nir.Stmt{Op: nir.OpDiscard, Value: value, Pos: l.pos(stmt.Start)}, nil
+		return append(pre, nir.Stmt{Op: nir.OpDiscard, Value: value, Pos: l.pos(stmt.Start)}), nil
 	case "IfStatement":
 		return l.ifStatement(stmt, sc)
 	case "VariableStatement":
 		return l.localDeclaration(stmt, sc)
 	case "Block":
-		return nir.Stmt{}, l.fail(stmt.Start, "lower.unsupported-statement", "独立语句块不在本阶段子集内")
+		return nil, l.fail(stmt.Start, "lower.unsupported-statement", "独立语句块不在本阶段子集内")
 	default:
-		return nir.Stmt{}, l.fail(stmt.Start, "lower.unsupported-statement", "语句 %s 不在本阶段子集内", stmt.Kind)
+		return nil, l.fail(stmt.Start, "lower.unsupported-statement", "语句 %s 不在本阶段子集内", stmt.Kind)
 	}
 }
 
 // ifStatement 降低 if / else / else if。条件在调用方的作用域里求值一次；
 // 两条分支各自开一个子作用域，分支里的 let 不会泄漏到外面。
-func (l *lowerer) ifStatement(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
+func (l *lowerer) ifStatement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) {
 	if len(stmt.Children) < 2 || len(stmt.Children) > 3 {
-		return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-arity", "if 有 %d 个子节点", len(stmt.Children))
+		return nil, l.fail(stmt.Start, "lower.bad-arity", "if 有 %d 个子节点", len(stmt.Children))
 	}
 	condNode := &stmt.Children[0]
 	if err := l.typedOperand(condNode, frontend.KindBoolean, "if 的条件"); err != nil {
-		return nir.Stmt{}, err
+		return nil, err
 	}
-	cond, err := l.expr(condNode, sc, 1)
+	cond, pre, err := l.expr(condNode, sc, 1)
 	if err != nil {
-		return nir.Stmt{}, err
+		return nil, err
 	}
 	then, err := l.branchStmts(&stmt.Children[1], sc.child())
 	if err != nil {
-		return nir.Stmt{}, err
+		return nil, err
 	}
 	var els []nir.Stmt
 	if len(stmt.Children) == 3 {
 		els, err = l.branchStmts(&stmt.Children[2], sc.child())
 		if err != nil {
-			return nir.Stmt{}, err
+			return nil, err
 		}
 	}
-	return nir.Stmt{Op: nir.OpIf, Cond: cond, Then: then, Else: els, Pos: l.pos(stmt.Start)}, nil
+	return append(pre, nir.Stmt{Op: nir.OpIf, Cond: cond, Then: then, Else: els, Pos: l.pos(stmt.Start)}), nil
 }
 
 // branchStmts 降低一条分支。带花括号的分支是 Block；单条语句（包括 else if）
@@ -345,50 +347,46 @@ func (l *lowerer) branchStmts(node *frontend.Node, sc *scope) ([]nir.Stmt, error
 	if node.Kind == "Block" {
 		return l.blockStmts(node, sc)
 	}
-	stmt, err := l.statement(node, sc)
-	if err != nil {
-		return nil, err
-	}
-	return []nir.Stmt{stmt}, nil
+	return l.statement(node, sc)
 }
 
 // localDeclaration 降低分支里的局部 const。骨架是
 // VariableStatement → VariableDeclarationList → VariableDeclaration，声明本身
 // 只带一个初始化表达式。
-func (l *lowerer) localDeclaration(stmt *frontend.Node, sc *scope) (nir.Stmt, error) {
+func (l *lowerer) localDeclaration(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) {
 	list := variableList(stmt)
 	if list == nil {
-		return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-declaration", "局部变量语句缺少声明列表")
+		return nil, l.fail(stmt.Start, "lower.bad-declaration", "局部变量语句缺少声明列表")
 	}
 	if len(list.Children) != 1 || list.Children[0].Kind != "VariableDeclaration" {
-		return nir.Stmt{}, l.fail(stmt.Start, "lower.bad-declaration", "本阶段只支持一次声明一个局部值")
+		return nil, l.fail(stmt.Start, "lower.bad-declaration", "本阶段只支持一次声明一个局部值")
 	}
 	declNode := &list.Children[0]
 	if declNode.Decl == 0 {
-		return nir.Stmt{}, l.fail(declNode.Start, "lower.bad-declaration", "局部变量缺少声明身份；只支持 const")
+		return nil, l.fail(declNode.Start, "lower.bad-declaration", "局部变量缺少声明身份；只支持 const")
 	}
 	decl, ok := l.facts.Declaration(declNode.Decl)
 	if !ok || decl.Kind != frontend.DeclLocal {
-		return nir.Stmt{}, l.fail(declNode.Start, "lower.bad-declaration", "局部变量的声明身份 %d 不对", declNode.Decl)
+		return nil, l.fail(declNode.Start, "lower.bad-declaration", "局部变量的声明身份 %d 不对", declNode.Decl)
 	}
 	if decl.Type == nil || (decl.Type.Kind != frontend.KindNumber && decl.Type.Kind != frontend.KindBoolean) {
-		return nir.Stmt{}, l.fail(decl.Start, "lower.bad-type", "局部值 %q 不是 number 或 boolean", decl.Name)
+		return nil, l.fail(decl.Start, "lower.bad-type", "局部值 %q 不是 number 或 boolean", decl.Name)
 	}
 	if len(declNode.Children) != 1 {
-		return nir.Stmt{}, l.fail(declNode.Start, "lower.missing-value", "局部值 %q 缺少初始值", decl.Name)
+		return nil, l.fail(declNode.Start, "lower.missing-value", "局部值 %q 缺少初始值", decl.Name)
 	}
 	init := &declNode.Children[0]
 	if err := l.typedOperand(init, decl.Type.Kind, "局部值 "+decl.Name); err != nil {
-		return nir.Stmt{}, err
+		return nil, err
 	}
-	value, err := l.expr(init, sc, 1)
+	value, pre, err := l.expr(init, sc, 1)
 	if err != nil {
-		return nir.Stmt{}, err
+		return nil, err
 	}
 	if !sc.define(decl.ID, decl.Name) {
-		return nir.Stmt{}, l.fail(decl.Start, "lower.duplicate-name", "局部值 %q 在同一个块里重复定义", decl.Name)
+		return nil, l.fail(decl.Start, "lower.duplicate-name", "局部值 %q 在同一个块里重复定义", decl.Name)
 	}
-	return nir.Stmt{Op: nir.OpLet, Name: decl.Name, Value: value, Pos: l.pos(stmt.Start)}, nil
+	return append(pre, nir.Stmt{Op: nir.OpLet, Name: decl.Name, Value: value, Pos: l.pos(stmt.Start)}), nil
 }
 
 func variableList(stmt *frontend.Node) *frontend.Node {
@@ -419,54 +417,59 @@ func (l *lowerer) consoleLog(call *frontend.Node) (*frontend.Node, bool, error) 
 	return &call.Children[1], true, nil
 }
 
-func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error) {
+func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
 	if n == nil {
-		return nil, l.fail(0, "lower.missing-expr", "表达式为空")
+		return nil, nil, l.fail(0, "lower.missing-expr", "表达式为空")
 	}
 	if depth > maxDepth {
-		return nil, l.fail(n.Start, "lower.too-deep", "表达式嵌套超过 %d 层", maxDepth)
+		return nil, nil, l.fail(n.Start, "lower.too-deep", "表达式嵌套超过 %d 层", maxDepth)
 	}
 	switch n.Kind {
 	case "Identifier":
-		return l.identifier(n, sc)
+		e, err := l.identifier(n, sc)
+		return e, nil, err
 	case "NumericLiteral":
 		if n.Bits == "" {
-			return nil, l.fail(n.Start, "lower.bad-literal", "数字字面量缺少位模式")
+			return nil, nil, l.fail(n.Start, "lower.bad-literal", "数字字面量缺少位模式")
 		}
-		return &nir.Expr{Op: nir.OpNumber, Bits: n.Bits, Pos: l.pos(n.Start)}, nil
+		return &nir.Expr{Op: nir.OpNumber, Bits: n.Bits, Pos: l.pos(n.Start)}, nil, nil
 	case "TrueKeyword", "FalseKeyword":
 		v := n.Kind == "TrueKeyword"
-		return &nir.Expr{Op: nir.OpBool, Value: &v, Pos: l.pos(n.Start)}, nil
+		return &nir.Expr{Op: nir.OpBool, Value: &v, Pos: l.pos(n.Start)}, nil, nil
 	case "BinaryExpression":
+		if n.Op == "&&" || n.Op == "||" {
+			return l.shortCircuit(n, sc, depth)
+		}
 		if isCompare(n.Op) {
 			return l.compare(n, sc, depth)
 		}
 		if !isArithmetic(n.Op) {
-			return nil, l.fail(n.Start, "lower.bad-operator", "运算符 %q 不在 + - * / 之内", n.Op)
+			return nil, nil, l.fail(n.Start, "lower.bad-operator", "运算符 %q 不在 + - * / 与比较之内", n.Op)
 		}
 		if len(n.Children) != 2 {
-			return nil, l.fail(n.Start, "lower.bad-arity", "二元运算有 %d 个操作数", len(n.Children))
+			return nil, nil, l.fail(n.Start, "lower.bad-arity", "二元运算有 %d 个操作数", len(n.Children))
 		}
 		for i := range n.Children {
 			if err := l.typedOperand(&n.Children[i], frontend.KindNumber, "运算符 "+n.Op+" 的操作数"); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
-		left, err := l.expr(&n.Children[0], sc, depth+1)
+		left, leftPre, err := l.expr(&n.Children[0], sc, depth+1)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		right, err := l.expr(&n.Children[1], sc, depth+1)
+		right, rightPre, err := l.expr(&n.Children[1], sc, depth+1)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return &nir.Expr{Op: nir.OpBinary, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, nil
+		pre := append(leftPre, rightPre...)
+		return &nir.Expr{Op: nir.OpBinary, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, pre, nil
 	case "PrefixUnaryExpression":
 		return l.unary(n, sc, depth)
 	case "CallExpression":
 		return l.call(n, sc, depth)
 	default:
-		return nil, l.fail(n.Start, "lower.unsupported-expr", "表达式 %s 不在本阶段子集内", n.Kind)
+		return nil, nil, l.fail(n.Start, "lower.unsupported-expr", "表达式 %s 不在本阶段子集内", n.Kind)
 	}
 }
 
@@ -501,38 +504,39 @@ func (l *lowerer) identifier(n *frontend.Node, sc *scope) (*nir.Expr, error) {
 
 // compare 降低有序比较与严格相等。有序比较只接受 number；严格相等要求两侧
 // 是同一个标量类型。操作数顺序原样保留，求值顺序由后端负责。
-func (l *lowerer) compare(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error) {
+func (l *lowerer) compare(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
 	if len(n.Children) != 2 {
-		return nil, l.fail(n.Start, "lower.bad-arity", "比较运算有 %d 个操作数", len(n.Children))
+		return nil, nil, l.fail(n.Start, "lower.bad-arity", "比较运算有 %d 个操作数", len(n.Children))
 	}
 	leftNode, rightNode := &n.Children[0], &n.Children[1]
 	if nir.IsOrderingOperator(n.Op) {
 		if err := l.typedOperand(leftNode, frontend.KindNumber, "比较的左操作数"); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := l.typedOperand(rightNode, frontend.KindNumber, "比较的右操作数"); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		if leftNode.Type == nil || rightNode.Type == nil {
-			return nil, l.fail(n.Start, "lower.bad-type", "严格相等的操作数缺少类型摘要")
+			return nil, nil, l.fail(n.Start, "lower.bad-type", "严格相等的操作数缺少类型摘要")
 		}
 		if leftNode.Type.Kind != rightNode.Type.Kind {
-			return nil, l.fail(n.Start, "lower.bad-type", "严格相等需要两侧同类型，实际为 %s 与 %s", leftNode.Type.Kind, rightNode.Type.Kind)
+			return nil, nil, l.fail(n.Start, "lower.bad-type", "严格相等需要两侧同类型，实际为 %s 与 %s", leftNode.Type.Kind, rightNode.Type.Kind)
 		}
 		if leftNode.Type.Kind != frontend.KindNumber && leftNode.Type.Kind != frontend.KindBoolean {
-			return nil, l.fail(n.Start, "lower.bad-type", "严格相等只支持 number 或 boolean，实际为 %s", leftNode.Type.Kind)
+			return nil, nil, l.fail(n.Start, "lower.bad-type", "严格相等只支持 number 或 boolean，实际为 %s", leftNode.Type.Kind)
 		}
 	}
-	left, err := l.expr(leftNode, sc, depth+1)
+	left, leftPre, err := l.expr(leftNode, sc, depth+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	right, err := l.expr(rightNode, sc, depth+1)
+	right, rightPre, err := l.expr(rightNode, sc, depth+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &nir.Expr{Op: nir.OpCompare, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, nil
+	pre := append(leftPre, rightPre...)
+	return &nir.Expr{Op: nir.OpCompare, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, pre, nil
 }
 
 // unary 处理一元运算。`!` 直接降成 not；一元正负号只接受数字字面量，并在
@@ -540,69 +544,129 @@ func (l *lowerer) compare(n *frontend.Node, sc *scope, depth int) (*nir.Expr, er
 //
 // 这样 -0 会被写成 0x8000000000000000，而不是「0 再取负」：后者依赖运行时的
 // 取负语义，而常量折叠在编译期就可能把符号位抹掉。
-func (l *lowerer) unary(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error) {
+func (l *lowerer) unary(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
 	if len(n.Children) != 1 {
-		return nil, l.fail(n.Start, "lower.bad-arity", "一元运算有 %d 个操作数", len(n.Children))
+		return nil, nil, l.fail(n.Start, "lower.bad-arity", "一元运算有 %d 个操作数", len(n.Children))
 	}
 	operand := &n.Children[0]
 	if n.Op == "!" {
 		if err := l.typedOperand(operand, frontend.KindBoolean, "! 的操作数"); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		value, err := l.expr(operand, sc, depth+1)
+		value, pre, err := l.expr(operand, sc, depth+1)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return &nir.Expr{Op: nir.OpNot, Operand: value, Pos: l.pos(n.Start)}, nil
+		return &nir.Expr{Op: nir.OpNot, Operand: value, Pos: l.pos(n.Start)}, pre, nil
 	}
 	if n.Op != "-" && n.Op != "+" {
-		return nil, l.fail(n.Start, "lower.bad-operator", "一元运算符 %q 不在本阶段子集内", n.Op)
+		return nil, nil, l.fail(n.Start, "lower.bad-operator", "一元运算符 %q 不在本阶段子集内", n.Op)
 	}
 	if operand.Kind != "NumericLiteral" || operand.Bits == "" {
-		return nil, l.fail(n.Start, "lower.bad-unary", "一元 %q 只支持数字字面量", n.Op)
+		return nil, nil, l.fail(n.Start, "lower.bad-unary", "一元 %q 只支持数字字面量", n.Op)
 	}
 	bits, err := parseBits(operand.Bits)
 	if err != nil {
-		return nil, l.fail(n.Start, "lower.bad-literal", "位模式 %q 不合法", operand.Bits)
+		return nil, nil, l.fail(n.Start, "lower.bad-literal", "位模式 %q 不合法", operand.Bits)
 	}
 	if n.Op == "-" {
 		bits ^= 1 << 63
 	}
-	return &nir.Expr{Op: nir.OpNumber, Bits: formatBits(bits), Pos: l.pos(n.Start)}, nil
+	return &nir.Expr{Op: nir.OpNumber, Bits: formatBits(bits), Pos: l.pos(n.Start)}, nil, nil
 }
 
-func (l *lowerer) call(n *frontend.Node, sc *scope, depth int) (*nir.Expr, error) {
+func (l *lowerer) call(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
 	if len(n.Children) == 0 {
-		return nil, l.fail(n.Start, "lower.bad-arity", "调用没有实参列表")
+		return nil, nil, l.fail(n.Start, "lower.bad-arity", "调用没有实参列表")
 	}
 	callee := &n.Children[0]
 	if callee.Kind != "Identifier" {
-		return nil, l.fail(n.Start, "lower.unknown-callee", "调用目标不是直接函数名")
+		return nil, nil, l.fail(n.Start, "lower.unknown-callee", "调用目标不是直接函数名")
 	}
 	decl, ok := l.facts.Declaration(callee.Target)
 	if !ok || decl.Kind != frontend.DeclFunction {
-		return nil, l.fail(n.Start, "lower.unknown-callee", "调用目标 %q 不是本文件里的函数", callee.Name)
+		return nil, nil, l.fail(n.Start, "lower.unknown-callee", "调用目标 %q 不是本文件里的函数", callee.Name)
 	}
 	args := n.Children[1:]
 	if len(args) != len(decl.Parameters) {
-		return nil, l.fail(n.Start, "lower.bad-arity", "调用 %q 给了 %d 个实参，声明有 %d 个参数", decl.Name, len(args), len(decl.Parameters))
+		return nil, nil, l.fail(n.Start, "lower.bad-arity", "调用 %q 给了 %d 个实参，声明有 %d 个参数", decl.Name, len(args), len(decl.Parameters))
 	}
-	expr := &nir.Expr{Op: nir.OpCall, Function: decl.Name, Pos: l.pos(n.Start)}
+	exprs := make([]nir.Expr, len(args))
+	var pre []nir.Stmt
+	var pending []int
 	for i := range args {
 		param, ok := l.facts.Declaration(decl.Parameters[i])
 		if !ok || param.Type == nil {
-			return nil, l.fail(n.Start, "lower.unknown-param", "函数 %q 的第 %d 个参数没有类型摘要", decl.Name, i+1)
+			return nil, nil, l.fail(n.Start, "lower.unknown-param", "函数 %q 的第 %d 个参数没有类型摘要", decl.Name, i+1)
 		}
 		if err := l.typedOperand(&args[i], param.Type.Kind, "调用的实参"); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		arg, err := l.expr(&args[i], sc, depth+1)
+		arg, argPre, err := l.expr(&args[i], sc, depth+1)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		expr.Args = append(expr.Args, *arg)
+		exprs[i] = *arg
+		if len(argPre) == 0 {
+			pending = append(pending, i)
+			continue
+		}
+		// 这个实参带准备工作。先把它之前还没物化的实参按顺序算出来，
+		// 再执行准备工作，最后物化它自己——否则后面的副作用会跑到前面。
+		for _, j := range pending {
+			name := l.tempName()
+			value := exprs[j]
+			pre = append(pre, nir.Stmt{Op: nir.OpLet, Name: name, Value: &value, Pos: l.pos(args[j].Start)})
+			exprs[j] = nir.Expr{Op: nir.OpLocal, Name: name}
+		}
+		pending = nil
+		pre = append(pre, argPre...)
+		name := l.tempName()
+		value := exprs[i]
+		pre = append(pre, nir.Stmt{Op: nir.OpLet, Name: name, Value: &value, Pos: l.pos(args[i].Start)})
+		exprs[i] = nir.Expr{Op: nir.OpLocal, Name: name}
 	}
-	return expr, nil
+	return &nir.Expr{Op: nir.OpCall, Function: decl.Name, Args: exprs, Pos: l.pos(n.Start)}, pre, nil
+}
+
+// shortCircuit 降低 && 与 ||。左侧的准备工作在外层执行；右侧的准备工作与
+// 右值一起放进 short 的 right 列表，只有真正需要求值右侧时才执行。结果绑定
+// 到一个临时值，后续表达式用 local 读取它。
+func (l *lowerer) shortCircuit(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
+	if len(n.Children) != 2 {
+		return nil, nil, l.fail(n.Start, "lower.bad-arity", "短路运算有 %d 个操作数", len(n.Children))
+	}
+	leftNode, rightNode := &n.Children[0], &n.Children[1]
+	if err := l.typedOperand(leftNode, frontend.KindBoolean, "运算符 "+n.Op+" 的左操作数"); err != nil {
+		return nil, nil, err
+	}
+	if err := l.typedOperand(rightNode, frontend.KindBoolean, "运算符 "+n.Op+" 的右操作数"); err != nil {
+		return nil, nil, err
+	}
+	left, leftPre, err := l.expr(leftNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	right, rightPre, err := l.expr(rightNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := l.tempName()
+	pre := append(leftPre, nir.Stmt{
+		Op:       nir.OpShort,
+		Name:     name,
+		Operator: n.Op,
+		Left:     left,
+		Right:    rightPre,
+		Value:    right,
+		Pos:      l.pos(n.Start),
+	})
+	return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, pre, nil
+}
+
+func (l *lowerer) tempName() string {
+	l.temp++
+	return fmt.Sprintf("_tmp_%d", l.temp)
 }
 
 // typedOperand 检查一个表达式的类型摘要是不是 want。降低不重新推导类型，

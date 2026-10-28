@@ -76,6 +76,12 @@ func compareNode(op string, left, right frontend.Node) frontend.Node {
 	return n
 }
 
+func shortNode(op string, left, right frontend.Node) frontend.Node {
+	n := typed("BinaryExpression", frontend.KindBoolean, left, right)
+	n.Op = op
+	return n
+}
+
 func consoleLog(arg frontend.Node) frontend.Node {
 	access := typed("PropertyAccessExpression", frontend.KindVoid, ident("console", 0))
 	access.Name = "log"
@@ -585,6 +591,78 @@ func TestLowersVoidImplicitReturn(t *testing.T) {
 	body := module.Functions[0].Body
 	if len(body) != 2 || body[1].Op != nir.OpReturn {
 		t.Fatalf("void 函数末尾应补一条 return：%+v", body)
+	}
+}
+
+// shortFacts 对应：
+//
+//	function mark(n: number, value: boolean): boolean { console.log(n); return value; }
+//	console.log(mark(1, false) && mark(2, true));
+//	const a: boolean = mark(3, true) || mark(4, false);
+//	console.log(a);
+func shortFacts() *frontend.Facts {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	markBody := node("Block",
+		node("ExpressionStatement", consoleLog(ident("n", 2))),
+		node("ReturnStatement", boolIdent("value", 3)),
+	)
+	mark := func(bits string, v bool) frontend.Node {
+		return typed("CallExpression", frontend.KindBoolean, ident("mark", 1), literal(bits), boolLiteral(v))
+	}
+	constNode := node("Const")
+	constNode.Decl = 4
+	module := node("Block",
+		node("ExpressionStatement", consoleLog(shortNode("&&", mark("0x3ff0000000000000", false), mark("0x4000000000000000", true)))),
+		constNode,
+		node("ExpressionStatement", consoleLog(boolIdent("a", 4))),
+	)
+	init := shortNode("||", mark("0x4008000000000000", true), mark("0x4010000000000000", false))
+	return &frontend.Facts{
+		SchemaVersion: 1,
+		Session:       "s",
+		File:          "/tmp/t.ts",
+		Module:        &module,
+		Declarations: []frontend.Declaration{
+			{ID: 1, Kind: frontend.DeclFunction, Name: "mark", Start: 0, Length: 20, Result: &boolean, Parameters: []int{2, 3}, Body: &markBody},
+			{ID: 2, Kind: frontend.DeclParameter, Name: "n", Start: 4, Length: 1, Type: &number},
+			{ID: 3, Kind: frontend.DeclParameter, Name: "value", Start: 6, Length: 5, Type: &boolean},
+			{ID: 4, Kind: frontend.DeclConst, Name: "a", Start: 30, Length: 1, Type: &boolean, Body: &init},
+		},
+	}
+}
+
+func TestLowersShortCircuit(t *testing.T) {
+	module := lowerFacts(t, shortFacts())
+	main := module.Functions[1]
+	if main.Name != "main" || len(main.Body) != 6 {
+		t.Fatalf("main 的形状不对：%+v", main)
+	}
+	if got := main.Body[0]; got.Op != nir.OpShort || got.Operator != "&&" || got.Name == "" {
+		t.Fatalf("第一条应是 && 的 short：%+v", got)
+	}
+	if got := main.Body[1]; got.Op != nir.OpPrint || got.Value == nil || got.Value.Op != nir.OpLocal {
+		t.Fatalf("第二条应打印短路结果：%+v", got)
+	}
+	if got := main.Body[2]; got.Op != nir.OpShort || got.Operator != "||" {
+		t.Fatalf("第三条应是 || 的 short：%+v", got)
+	}
+	if got := main.Body[3]; got.Op != nir.OpLet || got.Name != "a" {
+		t.Fatalf("第四条应绑定 const a：%+v", got)
+	}
+}
+
+func TestRejectsShortMismatch(t *testing.T) {
+	facts := shortFacts()
+	init := facts.Declarations[3].Body
+	init.Children[0] = literal("0x3ff0000000000000")
+	module, err := Lower(snapshot(t), facts)
+	if err == nil || module != nil {
+		t.Fatal("短路左侧为 number 时应被拒绝")
+	}
+	var d *diagnostic.Diagnostic
+	if !errors.As(err, &d) || d.Code != "lower.bad-type" {
+		t.Fatalf("应报 lower.bad-type，实际 %v", err)
 	}
 }
 

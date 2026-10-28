@@ -451,6 +451,9 @@ func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
 		out.Type = &typ
 	}
 	switch {
+	case ast.IsParenthesizedExpression(node):
+		// 括号不改变求值顺序，也不该在骨架里占一层；直接返回里面的表达式。
+		return b.bodyNode(node.AsParenthesizedExpression().Expression)
 	case ast.IsIdentifier(node):
 		out.Name = node.Text()
 		if !b.declNameNodes[node] {

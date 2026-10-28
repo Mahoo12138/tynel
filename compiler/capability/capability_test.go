@@ -441,6 +441,41 @@ func variableStatement(declID int, init frontend.Node) frontend.Node {
 	return node("VariableStatement", node("VariableDeclarationList", decl))
 }
 
+// TestShortCircuit 覆盖 && / || 的操作数类型：两侧都必须 boolean，未选中的
+// 右侧也要遍历。
+func TestShortCircuit(t *testing.T) {
+	boolean := frontend.Type{Kind: frontend.KindBoolean}
+	facts := base()
+	facts.Declarations[0].Result = &boolean
+	facts.Declarations[1].Type = &boolean
+	facts.Declarations[2].Type = &boolean
+	body := node("Block", node("ReturnStatement", compareNode("&&", boolIdent("a", 2), boolIdent("b", 3))))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("boolean && boolean 应通过，实际 %v", codes(findings))
+	}
+
+	// 右侧是 number。
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	facts.Declarations[1].Type = &boolean
+	body = node("Block", node("ReturnStatement", compareNode("&&", boolIdent("a", 2), ident("b", 3))))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	// 未选中的右侧仍有未实现运算。
+	facts = base()
+	facts.Declarations[0].Result = &boolean
+	body = node("Block", node("ReturnStatement", compareNode("&&", boolLiteral(false),
+		compareNode("===", binary("%", ident("a", 2), ident("b", 3)), literalNumber()))))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-operator")
+}
+
+func literalNumber() frontend.Node {
+	return typed("NumericLiteral", frontend.KindNumber)
+}
+
 func TestCallArgumentCountIsChecked(t *testing.T) {
 	facts := base()
 	body := node("Block", node("ExpressionStatement", node("CallExpression", ident("add", 1))))

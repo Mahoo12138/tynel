@@ -192,7 +192,7 @@ func (m *Module) check(limits Limits) error {
 			}
 			nodes++
 		}
-		if err := checkStmts(f.Body, path+".body", 1, &nodes, limits, make(map[*Stmt]bool)); err != nil {
+		if err := checkStmts(f.Body, path+".body", 1, &nodes, limits, make(map[*Stmt]bool), false); err != nil {
 			return err
 		}
 	}
@@ -204,7 +204,7 @@ func (m *Module) check(limits Limits) error {
 
 // checkStmts 递归检查一个语句块。语句同样必须是树：共享或循环的块会让任何
 // 遍历都不终止，所以在进入之前先按指针去重。
-func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Limits, seen map[*Stmt]bool) error {
+func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Limits, seen map[*Stmt]bool, prelude bool) error {
 	if depth > limits.MaxDepth {
 		return badf("nir.budget", "%s 的语句块嵌套超过预算 %d", rootPath, limits.MaxDepth)
 	}
@@ -216,10 +216,16 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 		}
 		seen[s] = true
 		*nodes++
+		if prelude && s.Op != OpLet && s.Op != OpShort {
+			return badf("nir.bad-op", "%s（表达式准备块）只接受 let 或 short", spath)
+		}
 		switch s.Op {
 		case OpReturn, OpPrint, OpLet, OpDiscard:
 			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 {
 				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 cond、then 或 else", spath, s.Op)
+			}
+			if s.Operator != "" || s.Left != nil || len(s.Right) > 0 {
+				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 operator、left 或 right", spath, s.Op)
 			}
 			if s.Op != OpLet && s.Name != "" {
 				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 name", spath, s.Op)
@@ -253,21 +259,49 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if s.Value != nil {
 				return badf("nir.unexpected-field", "%s（op=if）不接受字段 value", spath)
 			}
+			if s.Operator != "" || s.Left != nil || len(s.Right) > 0 {
+				return badf("nir.unexpected-field", "%s（op=if）不接受字段 operator、left 或 right", spath)
+			}
 			if err := checkExpr(s.Cond, spath+".cond", 1, nodes, limits); err != nil {
 				return err
 			}
-			if err := checkStmts(s.Then, spath+".then", depth+1, nodes, limits, seen); err != nil {
+			if err := checkStmts(s.Then, spath+".then", depth+1, nodes, limits, seen, false); err != nil {
 				return err
 			}
 			if len(s.Else) > 0 {
-				if err := checkStmts(s.Else, spath+".else", depth+1, nodes, limits, seen); err != nil {
+				if err := checkStmts(s.Else, spath+".else", depth+1, nodes, limits, seen, false); err != nil {
 					return err
 				}
+			}
+		case OpShort:
+			if s.Name == "" {
+				return badf("nir.missing", "%s 的 short 缺少 name", spath)
+			}
+			if s.Operator != "&&" && s.Operator != "||" {
+				return badf("nir.bad-op", "%s 的 short.operator 为 %q，只接受 && 或 ||", spath, s.Operator)
+			}
+			if s.Left == nil {
+				return badf("nir.missing", "%s 的 short 缺少 left", spath)
+			}
+			if s.Value == nil {
+				return badf("nir.missing", "%s 的 short 缺少 value", spath)
+			}
+			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 {
+				return badf("nir.unexpected-field", "%s（op=short）不接受字段 cond、then 或 else", spath)
+			}
+			if err := checkExpr(s.Left, spath+".left", 1, nodes, limits); err != nil {
+				return err
+			}
+			if err := checkExpr(s.Value, spath+".value", 1, nodes, limits); err != nil {
+				return err
+			}
+			if err := checkStmts(s.Right, spath+".right", depth+1, nodes, limits, seen, true); err != nil {
+				return err
 			}
 		case "":
 			return badf("nir.missing", "%s 缺少 op", spath)
 		default:
-			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard 或 if", spath, s.Op)
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if 或 short", spath, s.Op)
 		}
 	}
 	return nil

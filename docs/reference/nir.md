@@ -49,6 +49,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `let` | `name`、`value` 必填 | 定义一个局部值，供同一块内的后续语句按名字读取 |
 | `discard` | `value` 必填 | 求值一个表达式并丢弃结果 |
 | `if` | `cond` 必填，`then` / `else` 可选 | 条件为 `bool`；两个分支各自是一个语句块 |
+| `short` | `name`、`operator`、`left`、`value` 必填，`right` 可选 | `&&` / `||` 的短路求值，结果绑定到 `name`；`right` 是只在需要时执行的准备块 |
 
 `let` 不是语言层面的变量，它解决的是求值次数：前端把模块级 `const`、分支里的 `const` 和需要复用的中间结果落成局部值，避免在表达式里重复求值——`const x = f(); g(x, x)` 只应该调用一次 `f`。
 
@@ -68,6 +69,17 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 ```
 
 `then` 或 `else` 为空表示空分支；`else` 为空与省略等价。两条路径在编译期都被检查、都被保留，运行时才按条件选择；图示见[分支的两条路径](branches.md)。
+
+`short` 是短路求值的结果绑定：
+
+```json
+{ "op": "short", "name": "_tmp_1", "operator": "&&",
+  "left": {"op": "param", "name": "a"},
+  "right": [],
+  "value": {"op": "param", "name": "b"} }
+```
+
+先执行 `left` 并赋给 `name`；`&&` 在 `name` 为真时执行 `right` 列表，再把 `value` 赋给 `name`；`||` 在 `name` 为假时执行。`right` 只接受 `let` 与 `short`，它的局部值只对 `value` 可见。`short` 的 `name` 在语句之后可见，类型是 `bool`。完整语义见[短路求值](short-circuit.md)。
 
 ## 表达式
 
@@ -123,6 +135,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | 调用 | 目标函数必须存在；实参个数等于形参个数；每个实参类型等于对应形参类型 |
 | 类型 | 字面量是 `number` 或 `bool`；参数取它声明的类型；四则运算的结果是 `number`；`compare` 的结果是 `bool`，输入按运算符分组；`not` 的操作数与结果都是 `bool`；调用表达式的类型是被调函数的返回类型 |
 | 分支 | `if` 的 `cond` 必须是 `bool`；`then` 与 `else` 各自在子作用域里检查 |
+| 短路 | `short` 的 `left` 与 `value` 必须是 `bool`；`name` 在当前块里唯一，类型为 `bool`；`right` 只在需要时执行 |
 | 返回值 | 返回 `number` 或 `bool` 的函数必须在每条路径上以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值。`if` 只有两臂都存在且都结束时才算覆盖路径 |
 | 输出 | `print` 只接受 `number` 或 `bool`，`void` 调用不能作为值使用 |
 | 丢弃 | `discard` 的表达式必须成立，结果类型不限 |
@@ -163,7 +176,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.local-type` | 语义 | `let` 的值不是 `number` 或 `bool` |
 | `nir.condition-type` | 语义 | `if` 的条件不是 `bool` |
 | `nir.unknown-local` | 语义 | 引用了尚未定义的局部值，或局部值不在当前块及祖先块里 |
-| `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number`、有序比较收到 `bool`、严格相等两侧类型不同 |
+| `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number`、有序比较收到 `bool`、`short` 的操作数不是 `bool` |
 | `nir.missing-return` | 语义 | 返回 `number` 或 `bool` 的函数有路径没有 `return` |
 | `nir.io` | 环境 | 打开、写入或改名失败 |
 

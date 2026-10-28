@@ -188,6 +188,10 @@ func (c *checker) node(n *frontend.Node) {
 			}
 			c.node(left)
 			c.node(right)
+		case n.Op == "&&" || n.Op == "||":
+			for i := range n.Children {
+				c.boolOperand(&n.Children[i], "运算符 "+n.Op+" 的操作数")
+			}
 		case n.Op == "==" || n.Op == "!=":
 			c.report(n.Start, "cap.bad-operator", "宽松相等 %q 不在本阶段子集内，请使用 ===", n.Op)
 		default:
@@ -247,7 +251,7 @@ func (c *checker) valueNode(n *frontend.Node, what string) {
 		return
 	}
 	if n.Type != nil && n.Type.Kind == frontend.KindVoid {
-		c.report(n.Start, "cap.void-value", "%s 需要一个值，但这里是 void 调用", what)
+		c.report(n.Start, "cap.void-value", "%s需要一个值，但这里是 void 调用", what)
 		return
 	}
 	c.node(n)
@@ -270,7 +274,7 @@ func (c *checker) typedOperand(n *frontend.Node, want frontend.Kind, what string
 		return
 	}
 	if n.Type != nil && n.Type.Kind == frontend.KindVoid {
-		c.report(n.Start, "cap.void-value", "%s 需要一个值，但这里是 void 调用", what)
+		c.report(n.Start, "cap.void-value", "%s需要一个值，但这里是 void 调用", what)
 		return
 	}
 	if n.Type == nil || n.Type.Kind != want {

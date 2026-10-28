@@ -157,6 +157,34 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 					return err
 				}
 			}
+		case OpShort:
+			left, err := c.exprType(s.Left, sc)
+			if err != nil {
+				return err
+			}
+			if left != TypeBool {
+				return failAt("nir.operand-type", s.Pos, "short %q 的左侧必须是 bool，实际为 %s", s.Operator, left)
+			}
+			// 右侧的准备工作只在这里执行，局部值也只在这里可见；value 在同一
+			// 个子作用域里求值，随后赋给外层的 name。
+			right := sc.child()
+			if err := c.stmts(s.Right, right, f); err != nil {
+				return err
+			}
+			value, err := c.exprType(s.Value, right)
+			if err != nil {
+				return err
+			}
+			if value != TypeBool {
+				return failAt("nir.operand-type", s.Pos, "short %q 的右侧必须是 bool，实际为 %s", s.Operator, value)
+			}
+			if _, exists := sc.names[s.Name]; exists {
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 重复定义", f.Name, s.Name)
+			}
+			if _, exists := sc.params[s.Name]; exists {
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 与参数重复", f.Name, s.Name)
+			}
+			sc.names[s.Name] = TypeBool
 		}
 	}
 	return nil

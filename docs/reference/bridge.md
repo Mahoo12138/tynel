@@ -102,6 +102,7 @@ deadlocals / escape / walk / SSA / obj / link
 | `call` | `ir.NewCallExpr(pos, OCALL, callee.Nname, args)` |
 | `return` | `ir.NewReturnStmt` |
 | `if` | `ir.NewIfStmt`，`then` 与 `else` 各自构造成 `[]ir.Node` |
+| `short` | 一个 `ir.BlockStmt`：先把左侧赋给 bool 局部值，再用 `ir.NewIfStmt` 决定是否执行右侧准备块并把结果写回 |
 | `let` | `fn.NewLocal` 造一个自动变量，再生成一条赋值；类型跟着值走 |
 | `print` | 调用支持函数的 `OCALL`，作为语句直接放进函数体；`number` 与 `bool` 各有一个目标函数 |
 
@@ -131,6 +132,12 @@ NIR 的 `if` 直接对应 `ir.NewIfStmt`，`then` 与 `else` 各自构造成 `[]
 局部变量按 NIR 的块作用域分配。bridge 维护一个名字表栈：`let` 写进当前块，读取沿父链查找。两条分支可以各有一个同名 `x`，它们指向不同的 `*ir.Name`；Go 的符号名不能重复，后出现的一个会改成 `x$1`，NIR 里的名字仍然按作用域解析。分支里的局部变量不会提升到 `if` 之前，未选中的分支也不会求值。
 
 一个块在遇到结束语句后停止生成：`return` 之后的语句不可达，NIR 保留它们供验证器检查，但 bridge 不把它们交给 Go 编译器。
+
+## 短路的结果绑定
+
+NIR 的 `short` 展开成一个 `ir.BlockStmt`：先把左侧赋给一个 bool 局部值；`&&` 用这个值作条件，`||` 用它的 `ONOT`；条件成立时执行右侧准备块，再把右值赋回同一个局部值。这个局部值就是后续 `local` 引用读到的结果。
+
+右侧准备块用子作用域构造，里面的局部变量只在条件成立时执行，也不会泄漏到外层。bridge 不把 `&&` / `||` 直接交给 Go 的二元表达式，而是显式生成条件赋值——这样右侧的准备工作、临时值和赋值顺序都留在 `if` 内部，和 NIR 的形状一一对应。
 
 ## 构造结果长什么样
 

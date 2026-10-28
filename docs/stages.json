@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "03.04",
+  "currentImplementationNode": "03.05",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -362,9 +362,13 @@
             "03.04"
           ],
           "planSection": "PLAN.md#task-03-05",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/short-circuit.md",
+            "docs/reference/nir.md",
+            "docs/validation/03-05-short.md"
+          ]
         },
         {
           "id": "03.06",

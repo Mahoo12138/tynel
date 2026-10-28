@@ -59,6 +59,7 @@ const (
 	OpLet     = "let"
 	OpDiscard = "discard"
 	OpIf      = "if"
+	OpShort   = "short"
 )
 
 // BinaryOperators 是首版允许的算术运算符，顺序用于报错提示。
@@ -105,15 +106,19 @@ type Pos struct {
 }
 
 // Stmt 是一条语句。Value 为 nil 只对无返回值的 return 合法；Cond、Then 与
-// Else 只属于 if。Then 与 Else 各自是一个语句块，可以继续嵌套 if。
+// Else 只属于 if；Operator、Left、Right 与 Value 只属于 short（Right 是右侧
+// 的准备工作，Value 是准备完之后的右值）。
 type Stmt struct {
-	Op    string `json:"op"`
-	Name  string `json:"name,omitempty"` // 仅 let 使用
-	Value *Expr  `json:"value,omitempty"`
-	Cond  *Expr  `json:"cond,omitempty"` // 仅 if 使用
-	Then  []Stmt `json:"then,omitempty"`
-	Else  []Stmt `json:"else,omitempty"`
-	Pos   *Pos   `json:"pos,omitempty"`
+	Op       string `json:"op"`
+	Name     string `json:"name,omitempty"` // let 或 short 的结果名
+	Value    *Expr  `json:"value,omitempty"`
+	Cond     *Expr  `json:"cond,omitempty"` // 仅 if 使用
+	Then     []Stmt `json:"then,omitempty"`
+	Else     []Stmt `json:"else,omitempty"`
+	Operator string `json:"operator,omitempty"` // 仅 short 使用
+	Left     *Expr  `json:"left,omitempty"`     // 仅 short 使用
+	Right    []Stmt `json:"right,omitempty"`    // 仅 short 使用
+	Pos      *Pos   `json:"pos,omitempty"`
 }
 
 // Expr 是一个表达式节点。字段按 Op 取用，其余字段必须为空。

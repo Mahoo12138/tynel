@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "mark",
+      "params": [
+        {"name": "n", "type": "number"},
+        {"name": "value", "type": "bool"}
+      ],
+      "result": "bool",
+      "body": [
+        {"op": "print", "value": {"op": "param", "name": "n"}},
+        {"op": "return", "value": {"op": "param", "name": "value"}}
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {
+          "op": "short",
+          "name": "t1",
+          "operator": "&&",
+          "left": {"op": "call", "function": "mark", "args": [
+            {"op": "number", "bits": "0x3ff0000000000000"},
+            {"op": "bool", "value": false}
+          ]},
+          "value": {"op": "call", "function": "mark", "args": [
+            {"op": "number", "bits": "0x4000000000000000"},
+            {"op": "bool", "value": true}
+          ]}
+        },
+        {"op": "print", "value": {"op": "local", "name": "t1"}},
+        {
+          "op": "short",
+          "name": "t2",
+          "operator": "||",
+          "left": {"op": "call", "function": "mark", "args": [
+            {"op": "number", "bits": "0x4008000000000000"},
+            {"op": "bool", "value": true}
+          ]},
+          "value": {"op": "call", "function": "mark", "args": [
+            {"op": "number", "bits": "0x4010000000000000"},
+            {"op": "bool", "value": false}
+          ]}
+        },
+        {"op": "print", "value": {"op": "local", "name": "t2"}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

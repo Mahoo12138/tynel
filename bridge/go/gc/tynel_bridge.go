@@ -409,6 +409,50 @@ func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {
 			ir.NewAssignStmt(b.pos, local, left),
 			ir.NewIfStmt(b.pos, cond, rightBody, nil),
 		}), nil
+	case "select":
+		if s.Name == "" || s.Cond == nil || s.ThenValue == nil || s.ElseValue == nil {
+			return nil, fmt.Errorf("select 缺少 name、cond、thenValue 或 elseValue")
+		}
+		cond, err := b.expr(s.Cond, sc)
+		if err != nil {
+			return nil, err
+		}
+		thenScope := sc.child()
+		thenPre, err := b.stmts(s.Then, thenScope)
+		if err != nil {
+			return nil, err
+		}
+		thenValue, err := b.expr(s.ThenValue, thenScope)
+		if err != nil {
+			return nil, err
+		}
+		elseScope := sc.child()
+		elsePre, err := b.stmts(s.Else, elseScope)
+		if err != nil {
+			return nil, err
+		}
+		elseValue, err := b.expr(s.ElseValue, elseScope)
+		if err != nil {
+			return nil, err
+		}
+		// 表达式节点的 Go 类型要等 typecheck 才补齐，这里以 NIR 的 result
+		// 声明为准；验证器已经保证两条分支与它一致。
+		var typ *types.Type
+		switch s.Type {
+		case "number":
+			typ = types.Types[types.TFLOAT64]
+		case "bool":
+			typ = types.Types[types.TBOOL]
+		default:
+			return nil, fmt.Errorf("select 的结果类型 %q 不支持", s.Type)
+		}
+		local := b.newLocal(s.Name, typ)
+		sc.define(s.Name, local)
+		thenBody := append(thenPre, ir.NewAssignStmt(b.pos, local, thenValue))
+		elseBody := append(elsePre, ir.NewAssignStmt(b.pos, local, elseValue))
+		return ir.NewBlockStmt(b.pos, []ir.Node{
+			ir.NewIfStmt(b.pos, cond, thenBody, elseBody),
+		}), nil
 	default:
 		return nil, fmt.Errorf("不支持的语句 op %q", s.Op)
 	}
@@ -603,15 +647,18 @@ type param struct {
 }
 
 type stmt struct {
-	Op       string `json:"op"`
-	Name     string `json:"name,omitempty"`
-	Value    *expr  `json:"value"`
-	Cond     *expr  `json:"cond"`
-	Then     []stmt `json:"then"`
-	Else     []stmt `json:"else"`
-	Operator string `json:"operator"`
-	Left     *expr  `json:"left"`
-	Right    []stmt `json:"right"`
+	Op        string `json:"op"`
+	Name      string `json:"name,omitempty"`
+	Value     *expr  `json:"value"`
+	Cond      *expr  `json:"cond"`
+	Then      []stmt `json:"then"`
+	Else      []stmt `json:"else"`
+	Operator  string `json:"operator"`
+	Left      *expr  `json:"left"`
+	Right     []stmt `json:"right"`
+	ThenValue *expr  `json:"thenValue"`
+	ElseValue *expr  `json:"elseValue"`
+	Type      string `json:"type"`
 }
 
 type expr struct {

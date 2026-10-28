@@ -162,6 +162,28 @@ func (c *checker) node(n *frontend.Node) {
 			return
 		}
 		c.typedOperand(&n.Children[0], decl.Type.Kind, "局部值 "+decl.Name)
+	case "ConditionalExpression":
+		if len(n.Children) != 3 {
+			c.report(n.Start, "cap.bad-arity", "三元式有 %d 个子节点", len(n.Children))
+			return
+		}
+		c.boolOperand(&n.Children[0], "三元式的条件")
+		thenNode, elseNode := &n.Children[1], &n.Children[2]
+		if thenNode.Type == nil || elseNode.Type == nil {
+			c.report(n.Start, "cap.bad-type", "三元式的分支缺少类型摘要")
+			return
+		}
+		if thenNode.Type.Kind != elseNode.Type.Kind {
+			c.report(n.Start, "cap.bad-type", "三元式两条分支类型不同：%s 与 %s", thenNode.Type.Kind, elseNode.Type.Kind)
+			return
+		}
+		if thenNode.Type.Kind != frontend.KindNumber && thenNode.Type.Kind != frontend.KindBoolean {
+			c.report(n.Start, "cap.bad-type", "三元式的结果不能是 %s", thenNode.Type.Kind)
+			return
+		}
+		for i := range n.Children {
+			c.node(&n.Children[i])
+		}
 	case "BinaryExpression":
 		if len(n.Children) != 2 {
 			c.report(n.Start, "cap.unsupported-syntax", "二元运算有 %d 个操作数", len(n.Children))
@@ -237,8 +259,6 @@ func (c *checker) node(n *frontend.Node) {
 		c.report(n.Start, "cap.unsupported-syntax", "new 表达式不在本阶段子集内")
 	case "FunctionExpression", "ArrowFunction", "ClassExpression":
 		c.report(n.Start, "cap.unsupported-syntax", "嵌套函数与类不在本阶段子集内")
-	case "ConditionalExpression":
-		c.report(n.Start, "cap.unsupported-syntax", "条件表达式不在本阶段子集内")
 	default:
 		c.report(n.Start, "cap.unsupported-syntax", "语法 %s 不在本阶段子集内", n.Kind)
 	}

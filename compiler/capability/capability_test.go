@@ -476,6 +476,37 @@ func literalNumber() frontend.Node {
 	return typed("NumericLiteral", frontend.KindNumber)
 }
 
+func ternaryNode(cond, then, els frontend.Node) frontend.Node {
+	return typed("ConditionalExpression", frontend.KindNumber, cond, then, els)
+}
+
+// TestTernary 覆盖条件表达式的条件与两臂：条件必须 boolean，两臂同属
+// number 或 boolean，未选中的分支也要遍历。
+func TestTernary(t *testing.T) {
+	facts := base()
+	body := node("Block", node("ReturnStatement", ternaryNode(boolLiteral(true), literalNumber(), literalNumber())))
+	facts.Declarations[0].Body = &body
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("true ? 1 : 2 应通过，实际 %v", codes(findings))
+	}
+
+	facts = base()
+	body = node("Block", node("ReturnStatement", ternaryNode(literalNumber(), literalNumber(), literalNumber())))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	facts = base()
+	body = node("Block", node("ReturnStatement", ternaryNode(boolLiteral(true), literalNumber(), boolLiteral(false))))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-type")
+
+	facts = base()
+	body = node("Block", node("ReturnStatement", ternaryNode(boolLiteral(false),
+		binary("%", literalNumber(), literalNumber()), literalNumber())))
+	facts.Declarations[0].Body = &body
+	wantCode(t, check(t, facts), "cap.bad-operator")
+}
+
 func TestCallArgumentCountIsChecked(t *testing.T) {
 	facts := base()
 	body := node("Block", node("ExpressionStatement", node("CallExpression", ident("add", 1))))

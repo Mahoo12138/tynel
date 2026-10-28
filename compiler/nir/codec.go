@@ -216,13 +216,13 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 		}
 		seen[s] = true
 		*nodes++
-		if prelude && s.Op != OpLet && s.Op != OpShort {
-			return badf("nir.bad-op", "%s（表达式准备块）只接受 let 或 short", spath)
+		if prelude && s.Op != OpLet && s.Op != OpShort && s.Op != OpSelect {
+			return badf("nir.bad-op", "%s（表达式准备块）只接受 let、short 或 select", spath)
 		}
 		switch s.Op {
 		case OpReturn, OpPrint, OpLet, OpDiscard:
-			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 {
-				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 cond、then 或 else", spath, s.Op)
+			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 || s.ThenValue != nil || s.ElseValue != nil || s.Type != "" {
+				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 cond、then、else、thenValue、elseValue 或 type", spath, s.Op)
 			}
 			if s.Operator != "" || s.Left != nil || len(s.Right) > 0 {
 				return badf("nir.unexpected-field", "%s（op=%s）不接受字段 operator、left 或 right", spath, s.Op)
@@ -259,6 +259,12 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if s.Value != nil {
 				return badf("nir.unexpected-field", "%s（op=if）不接受字段 value", spath)
 			}
+			if s.ThenValue != nil || s.ElseValue != nil {
+				return badf("nir.unexpected-field", "%s（op=if）不接受字段 thenValue 或 elseValue", spath)
+			}
+			if s.Type != "" {
+				return badf("nir.unexpected-field", "%s（op=if）不接受字段 type", spath)
+			}
 			if s.Operator != "" || s.Left != nil || len(s.Right) > 0 {
 				return badf("nir.unexpected-field", "%s（op=if）不接受字段 operator、left 或 right", spath)
 			}
@@ -289,6 +295,12 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 {
 				return badf("nir.unexpected-field", "%s（op=short）不接受字段 cond、then 或 else", spath)
 			}
+			if s.ThenValue != nil || s.ElseValue != nil {
+				return badf("nir.unexpected-field", "%s（op=short）不接受字段 thenValue 或 elseValue", spath)
+			}
+			if s.Type != "" {
+				return badf("nir.unexpected-field", "%s（op=short）不接受字段 type", spath)
+			}
 			if err := checkExpr(s.Left, spath+".left", 1, nodes, limits); err != nil {
 				return err
 			}
@@ -298,10 +310,44 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if err := checkStmts(s.Right, spath+".right", depth+1, nodes, limits, seen, true); err != nil {
 				return err
 			}
+		case OpSelect:
+			if s.Name == "" {
+				return badf("nir.missing", "%s 的 select 缺少 name", spath)
+			}
+			if s.Cond == nil {
+				return badf("nir.missing", "%s 的 select 缺少 cond", spath)
+			}
+			if s.ThenValue == nil {
+				return badf("nir.missing", "%s 的 select 缺少 thenValue", spath)
+			}
+			if s.ElseValue == nil {
+				return badf("nir.missing", "%s 的 select 缺少 elseValue", spath)
+			}
+			if s.Type != TypeNumber && s.Type != TypeBool {
+				return badf("nir.result-type", "%s 的 select.type 为 %q，只接受 number 或 bool", spath, s.Type)
+			}
+			if s.Value != nil || s.Operator != "" || s.Left != nil || len(s.Right) > 0 {
+				return badf("nir.unexpected-field", "%s（op=select）不接受字段 value、operator、left 或 right", spath)
+			}
+			if err := checkExpr(s.Cond, spath+".cond", 1, nodes, limits); err != nil {
+				return err
+			}
+			if err := checkExpr(s.ThenValue, spath+".thenValue", 1, nodes, limits); err != nil {
+				return err
+			}
+			if err := checkExpr(s.ElseValue, spath+".elseValue", 1, nodes, limits); err != nil {
+				return err
+			}
+			if err := checkStmts(s.Then, spath+".then", depth+1, nodes, limits, seen, true); err != nil {
+				return err
+			}
+			if err := checkStmts(s.Else, spath+".else", depth+1, nodes, limits, seen, true); err != nil {
+				return err
+			}
 		case "":
 			return badf("nir.missing", "%s 缺少 op", spath)
 		default:
-			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if 或 short", spath, s.Op)
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if、short 或 select", spath, s.Op)
 		}
 	}
 	return nil

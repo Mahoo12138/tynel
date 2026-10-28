@@ -37,6 +37,9 @@ func ifStmt(cond Expr, then, els []Stmt) Stmt {
 func shortStmt(name, op string, left Expr, right []Stmt, value Expr) Stmt {
 	return Stmt{Op: OpShort, Name: name, Operator: op, Left: &left, Right: right, Value: &value}
 }
+func selectStmt(name string, cond Expr, then []Stmt, thenValue Expr, els []Stmt, elseValue Expr, typ string) Stmt {
+	return Stmt{Op: OpSelect, Name: name, Cond: &cond, Then: then, ThenValue: &thenValue, Else: els, ElseValue: &elseValue, Type: typ}
+}
 
 func fn(name, result string, params []string, body ...Stmt) Function {
 	f := Function{Name: name, Result: result, Body: body}
@@ -273,6 +276,25 @@ func TestVerifyShortCircuit(t *testing.T) {
 	}
 }
 
+// TestVerifySelect 覆盖三元式的结果绑定：条件为 bool，两条分支同类型，
+// 分支内的准备块各自在子作用域里，结果名供后续 local 使用。
+func TestVerifySelect(t *testing.T) {
+	m := module("main", mainWith(
+		selectStmt("t1", boolLit(true), nil, num(1), nil, num(2), TypeNumber),
+		printStmt(local("t1")),
+		selectStmt("t2", boolLit(false),
+			[]Stmt{shortStmt("s", "||", boolLit(false), nil, boolLit(true))},
+			local("s"),
+			nil, boolLit(false), TypeBool,
+		),
+		printStmt(local("t2")),
+		retVoid(),
+	))
+	if err := Verify(m); err != nil {
+		t.Fatalf("三元式模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -337,6 +359,29 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		{"short 缺少 value", module("main", mainWith(
 			Stmt{Op: OpShort, Name: "t", Operator: "&&", Left: &ifWithValueCond},
 		)), "nir.missing"},
+		{"select 条件不是 bool", module("main", mainWith(
+			selectStmt("t", num(1), nil, num(1), nil, num(2), TypeNumber),
+		)), "nir.condition-type"},
+		{"select 两臂类型不同", module("main", mainWith(
+			selectStmt("t", boolLit(true), nil, num(1), nil, boolLit(false), TypeNumber),
+		)), "nir.result-type"},
+		{"select 声明类型与分支不同", module("main", mainWith(
+			selectStmt("t", boolLit(true), nil, num(1), nil, num(2), TypeBool),
+		)), "nir.result-type"},
+		{"select 缺少 elseValue", module("main", mainWith(
+			Stmt{Op: OpSelect, Name: "t", Cond: &ifWithValueCond, ThenValue: &ifWithValue, Type: TypeNumber},
+		)), "nir.missing"},
+		{"select 分支局部值泄漏", module("main", mainWith(
+			selectStmt("t", boolLit(true),
+				[]Stmt{letStmt("x", num(1))}, local("x"),
+				nil, num(2), TypeNumber,
+			),
+			printStmt(local("x")),
+		)), "nir.unknown-local"},
+		{"select 结果名重复", module("main", mainWith(
+			letStmt("t", num(0)),
+			selectStmt("t", boolLit(true), nil, num(1), nil, num(2), TypeNumber),
+		)), "nir.duplicate-name"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

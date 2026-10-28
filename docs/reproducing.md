@@ -83,7 +83,7 @@ cd tynel
 # 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
 
-# 只跑源码到原生的回归集合：52 个用例，其中 25 个程序会真的编译并运行。
+# 只跑源码到原生的回归集合：59 个用例，其中 28 个程序会真的编译并运行。
 ./.work/toolchain/go1.27.3-sdk-darwin-arm64/bin/go test -count=1 -v ./tests/source
 ```
 
@@ -156,7 +156,7 @@ go run . -nir ../testdata/output.ts > /tmp/output.nir.json
 ./bin/tynel build-ir /tmp/output.nir.json -o /tmp/output && /tmp/output
 ```
 
-宿主是独立模块，通过两条 `replace` 指向 `.work/frontend/typescript-go` 与仓库根目录，只导入 `tyneladapter` 和 Tynel 自己的 `compiler/source`，不导入任何 `internal` 包。诊断里的 `start` 是 UTF-8 字节偏移，`line`/`column` 是按快照换算的行列；换算规则和错误码见[源码快照与位置](reference/source.md)，适配接口与会话规则见[前端适配](reference/frontend.md)，声明 ID、类型摘要与校验规则见[声明身份与事实](reference/facts.md)，支持的写法与错误码见[原生能力白名单](reference/capability.md)，源码到 NIR 的对应关系见[从源码到 NIR](reference/lowering.md)，比较结果见[比较语义](reference/comparison.md)，分支的两条路径见[分支的两条路径](reference/branches.md)，返回路径与不可达语句见[返回路径](reference/returns.md)，短路与结果绑定见[短路求值](reference/short-circuit.md)，打印器的格式与读回方式见[输出格式](reference/output.md)。
+宿主是独立模块，通过两条 `replace` 指向 `.work/frontend/typescript-go` 与仓库根目录，只导入 `tyneladapter` 和 Tynel 自己的 `compiler/source`，不导入任何 `internal` 包。诊断里的 `start` 是 UTF-8 字节偏移，`line`/`column` 是按快照换算的行列；换算规则和错误码见[源码快照与位置](reference/source.md)，适配接口与会话规则见[前端适配](reference/frontend.md)，声明 ID、类型摘要与校验规则见[声明身份与事实](reference/facts.md)，支持的写法与错误码见[原生能力白名单](reference/capability.md)，源码到 NIR 的对应关系见[从源码到 NIR](reference/lowering.md)，比较结果见[比较语义](reference/comparison.md)，分支的两条路径见[分支的两条路径](reference/branches.md)，返回路径与不可达语句见[返回路径](reference/returns.md)，短路与结果绑定见[短路求值](reference/short-circuit.md)，三元式与分支内部准备见[三元式](reference/ternary.md)，打印器的格式与读回方式见[输出格式](reference/output.md)。
 
 `bridge/tsgo/check` 首次运行会下载前端依赖到 `.work/frontend/gomodcache`，之后可以离线构建；默认使用 `https://goproxy.cn`，可用 `TYNEL_GOPROXY` 覆盖。
 

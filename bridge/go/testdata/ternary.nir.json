@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "pick",
+      "params": [
+        {"name": "n", "type": "number"},
+        {"name": "value", "type": "number"}
+      ],
+      "result": "number",
+      "body": [
+        {"op": "print", "value": {"op": "param", "name": "n"}},
+        {"op": "return", "value": {"op": "param", "name": "value"}}
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {
+          "op": "select",
+          "name": "t1",
+          "cond": {"op": "bool", "value": true},
+          "thenValue": {"op": "call", "function": "pick", "args": [
+            {"op": "number", "bits": "0x3ff0000000000000"},
+            {"op": "number", "bits": "0x4024000000000000"}
+          ]},
+          "elseValue": {"op": "call", "function": "pick", "args": [
+            {"op": "number", "bits": "0x4000000000000000"},
+            {"op": "number", "bits": "0x4034000000000000"}
+          ]},
+          "type": "number"
+        },
+        {"op": "print", "value": {"op": "local", "name": "t1"}},
+        {
+          "op": "select",
+          "name": "t2",
+          "cond": {"op": "bool", "value": false},
+          "thenValue": {"op": "call", "function": "pick", "args": [
+            {"op": "number", "bits": "0x4008000000000000"},
+            {"op": "number", "bits": "0x4024000000000000"}
+          ]},
+          "elseValue": {"op": "call", "function": "pick", "args": [
+            {"op": "number", "bits": "0x4010000000000000"},
+            {"op": "number", "bits": "0x4034000000000000"}
+          ]},
+          "type": "number"
+        },
+        {"op": "print", "value": {"op": "local", "name": "t2"}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

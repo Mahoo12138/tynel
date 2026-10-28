@@ -417,6 +417,28 @@ func (b *factBuilder) typeOf(t *checker.Type) factType {
 		return factType{Kind: "other"}
 	}
 	flags := t.Flags()
+	if flags&checker.TypeFlagsUnion != 0 {
+		// 条件表达式常见 10 | 20 这种字面量联合。所有成员同属 number 或
+		// boolean 时，结果类别就是该标量；混合联合仍然是 other。
+		members := t.AsUnionOrIntersectionType().Types()
+		allNumber, allBool := len(members) > 0, len(members) > 0
+		for _, member := range members {
+			mf := member.Flags()
+			if mf&checker.TypeFlagsNumberLike == 0 {
+				allNumber = false
+			}
+			if mf&checker.TypeFlagsBooleanLike == 0 {
+				allBool = false
+			}
+		}
+		if allNumber {
+			return factType{Kind: "number"}
+		}
+		if allBool {
+			return factType{Kind: "boolean"}
+		}
+		return factType{Kind: "other"}
+	}
 	switch {
 	case flags&checker.TypeFlagsNumberLike != 0:
 		return factType{Kind: "number"}

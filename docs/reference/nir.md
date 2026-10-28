@@ -50,6 +50,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `discard` | `value` 必填 | 求值一个表达式并丢弃结果 |
 | `if` | `cond` 必填，`then` / `else` 可选 | 条件为 `bool`；两个分支各自是一个语句块 |
 | `short` | `name`、`operator`、`left`、`value` 必填，`right` 可选 | `&&` / `\|\|` 的短路求值，结果绑定到 `name`；`right` 是只在需要时执行的准备块 |
+| `select` | `name`、`cond`、`thenValue`、`elseValue`、`type` 必填，`then` / `else` 可选 | 条件表达式的结果绑定；`type` 是 `number` 或 `bool`，两条分支必须与它一致 |
 
 `let` 不是语言层面的变量，它解决的是求值次数：前端把模块级 `const`、分支里的 `const` 和需要复用的中间结果落成局部值，避免在表达式里重复求值——`const x = f(); g(x, x)` 只应该调用一次 `f`。
 
@@ -80,6 +81,19 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 ```
 
 先执行 `left` 并赋给 `name`；`&&` 在 `name` 为真时执行 `right` 列表，再把 `value` 赋给 `name`；`||` 在 `name` 为假时执行。`right` 只接受 `let` 与 `short`，它的局部值只对 `value` 可见。`short` 的 `name` 在语句之后可见，类型是 `bool`。完整语义见[短路求值](short-circuit.md)。
+
+`select` 是条件表达式的结果绑定：
+
+```json
+{ "op": "select", "name": "_tmp_1", "type": "number",
+  "cond": {"op": "param", "name": "flag"},
+  "then": [],
+  "thenValue": {"op": "number", "bits": "0x3ff0000000000000"},
+  "else": [],
+  "elseValue": {"op": "number", "bits": "0x4000000000000000"} }
+```
+
+条件为真时执行 `then` 列表，在同一个子作用域里求值 `thenValue`；为假时走 `else`。`then` / `else` 只接受 `let`、`short` 与 `select`。`name` 在语句之后可见，类型由 `type` 声明，两条分支的类型必须与它一致。完整语义见[三元式](ternary.md)。
 
 ## 表达式
 
@@ -136,6 +150,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | 类型 | 字面量是 `number` 或 `bool`；参数取它声明的类型；四则运算的结果是 `number`；`compare` 的结果是 `bool`，输入按运算符分组；`not` 的操作数与结果都是 `bool`；调用表达式的类型是被调函数的返回类型 |
 | 分支 | `if` 的 `cond` 必须是 `bool`；`then` 与 `else` 各自在子作用域里检查 |
 | 短路 | `short` 的 `left` 与 `value` 必须是 `bool`；`name` 在当前块里唯一，类型为 `bool`；`right` 只在需要时执行 |
+| 三元式 | `select` 的 `cond` 必须是 `bool`；两条分支必须同类型，且与 `type` 一致；`name` 在当前块里唯一 |
 | 返回值 | 返回 `number` 或 `bool` 的函数必须在每条路径上以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值。`if` 只有两臂都存在且都结束时才算覆盖路径 |
 | 输出 | `print` 只接受 `number` 或 `bool`，`void` 调用不能作为值使用 |
 | 丢弃 | `discard` 的表达式必须成立，结果类型不限 |
@@ -171,7 +186,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.unknown-function` | 语义 | 调用了不存在的函数 |
 | `nir.arg-count` | 语义 | 实参个数与形参不符 |
 | `nir.arg-type` | 语义 | 实参类型与形参不符 |
-| `nir.result-type` | 语义 | 返回值与函数声明不符，或 `void` 函数带返回值 |
+| `nir.result-type` | 语义 | 返回值与函数声明不符，`void` 函数带返回值，或 `select` 的两条分支类型不同、与 `type` 不一致 |
 | `nir.print-type` | 语义 | `print` 的参数不是 `number` 或 `bool` |
 | `nir.local-type` | 语义 | `let` 的值不是 `number` 或 `bool` |
 | `nir.condition-type` | 语义 | `if` 的条件不是 `bool` |

@@ -53,7 +53,7 @@ function neverCalled(n: number): number {
 | 类别 | 支持 | 说明 |
 | --- | --- | --- |
 | 声明 | `function`、参数、顶层 `const`、函数体内 `const` | 参数与常量限 `number`、`boolean`，返回值限 `number`、`boolean` 或 `void` |
-| 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!`，比较 `<` `<=` `>` `>=` `===` `!==`，短路 `&&` `\|\|` | 有序比较只接受 `number`；严格相等要求两侧同类型；`&&` / `\|\|` 两侧都必须是 `boolean` |
+| 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!`，比较 `<` `<=` `>` `>=` `===` `!==`，短路 `&&` `\|\|`，三元式 `? :` | 有序比较只接受 `number`；严格相等要求两侧同类型；`&&` / `\|\|` 两侧都必须是 `boolean`；三元式的条件必须是 `boolean`，两臂同类型 |
 | 调用 | 本文件内声明的函数，实参个数与形参一致 | 不支持函数值、方法调用 |
 | 语句 | `return`、表达式语句、语句块、`if` / `else` / `else if`、分支内 `const` | 表达式语句的结果被丢弃；`if` 的条件必须是 `boolean` |
 | 输出 | `console.log(<number 或 boolean>)` | 必须是内置 `console`，见下 |
@@ -63,6 +63,8 @@ function neverCalled(n: number): number {
 比较分两类：`<` `<=` `>` `>=` 只接受两个 `number`；`===` `!==` 要求两侧同为 `number` 或同为 `boolean`。`==` 与 `!=` 是合法 TypeScript，但会做隐式类型转换，本阶段按 `cap.bad-operator` 拒绝。`true < false` 在 TypeScript 里能通过，能力检查按 `cap.bad-type` 拒绝——布尔值没有原生顺序。混合类型比较（`1 === true`）由 TypeScript 直接拒绝。
 
 `&&` 与 `||` 的两个操作数都必须是 `boolean`。TypeScript 允许 `true && 1`，结果类型是 `1`；本阶段按 `cap.bad-type` 拒绝，不做数字真假转换。右侧即使被短路跳过也要检查：`false && (1 % 2 === 0)` 仍报 `cap.bad-operator`。
+
+三元式的条件必须是 `boolean`，两条分支必须同为 `number` 或同为 `boolean`。TypeScript 允许 `true ? 1 : false` 得到 `number | false`；本阶段按 `cap.bad-type` 拒绝，不把联合类型带进原生后端。未选中的分支同样遍历：`false ? (1 % 2) : 3` 仍报 `cap.bad-operator`。
 
 分支支持 `if`、`else`、`else if` 和嵌套分支。条件必须是 `boolean`；`if (1)` 在 TypeScript 里合法，能力检查按 `cap.bad-type` 拒绝。函数体内可以声明 `const`，作用域是所在的块；局部 `let` 还没有赋值语义，按 `cap.unsupported-syntax` 拒绝。能力检查会遍历未选中的分支，`if (false) { ... }` 里的未实现写法同样拒绝。
 

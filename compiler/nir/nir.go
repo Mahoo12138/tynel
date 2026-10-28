@@ -60,6 +60,7 @@ const (
 	OpDiscard = "discard"
 	OpIf      = "if"
 	OpShort   = "short"
+	OpSelect  = "select"
 )
 
 // BinaryOperators 是首版允许的算术运算符，顺序用于报错提示。
@@ -106,19 +107,23 @@ type Pos struct {
 }
 
 // Stmt 是一条语句。Value 为 nil 只对无返回值的 return 合法；Cond、Then 与
-// Else 只属于 if；Operator、Left、Right 与 Value 只属于 short（Right 是右侧
-// 的准备工作，Value 是准备完之后的右值）。
+// Else 属于 if 和 select；Operator、Left、Right 与 Value 只属于 short（Right
+// 是右侧的准备工作，Value 是准备完之后的右值）；ThenValue 与 ElseValue 只属于
+// select，是两条分支准备完之后各自的结果。
 type Stmt struct {
-	Op       string `json:"op"`
-	Name     string `json:"name,omitempty"` // let 或 short 的结果名
-	Value    *Expr  `json:"value,omitempty"`
-	Cond     *Expr  `json:"cond,omitempty"` // 仅 if 使用
-	Then     []Stmt `json:"then,omitempty"`
-	Else     []Stmt `json:"else,omitempty"`
-	Operator string `json:"operator,omitempty"` // 仅 short 使用
-	Left     *Expr  `json:"left,omitempty"`     // 仅 short 使用
-	Right    []Stmt `json:"right,omitempty"`    // 仅 short 使用
-	Pos      *Pos   `json:"pos,omitempty"`
+	Op        string `json:"op"`
+	Name      string `json:"name,omitempty"` // let、short 或 select 的结果名
+	Value     *Expr  `json:"value,omitempty"`
+	Cond      *Expr  `json:"cond,omitempty"` // if 或 select 使用
+	Then      []Stmt `json:"then,omitempty"`
+	Else      []Stmt `json:"else,omitempty"`
+	Operator  string `json:"operator,omitempty"`  // 仅 short 使用
+	Left      *Expr  `json:"left,omitempty"`      // 仅 short 使用
+	Right     []Stmt `json:"right,omitempty"`     // 仅 short 使用
+	ThenValue *Expr  `json:"thenValue,omitempty"` // 仅 select 使用
+	ElseValue *Expr  `json:"elseValue,omitempty"` // 仅 select 使用
+	Type      string `json:"type,omitempty"`      // 仅 select 使用，number 或 bool
+	Pos       *Pos   `json:"pos,omitempty"`
 }
 
 // Expr 是一个表达式节点。字段按 Op 取用，其余字段必须为空。

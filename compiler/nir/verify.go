@@ -185,6 +185,46 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 与参数重复", f.Name, s.Name)
 			}
 			sc.names[s.Name] = TypeBool
+		case OpSelect:
+			cond, err := c.exprType(s.Cond, sc)
+			if err != nil {
+				return err
+			}
+			if cond != TypeBool {
+				return failAt("nir.condition-type", s.Pos, "select 的条件必须是 bool，实际为 %s", cond)
+			}
+			thenScope := sc.child()
+			if err := c.stmts(s.Then, thenScope, f); err != nil {
+				return err
+			}
+			thenType, err := c.exprType(s.ThenValue, thenScope)
+			if err != nil {
+				return err
+			}
+			elseScope := sc.child()
+			if err := c.stmts(s.Else, elseScope, f); err != nil {
+				return err
+			}
+			elseType, err := c.exprType(s.ElseValue, elseScope)
+			if err != nil {
+				return err
+			}
+			if thenType != elseType {
+				return failAt("nir.result-type", s.Pos, "select 的两条分支类型不同：%s 与 %s", thenType, elseType)
+			}
+			if thenType != s.Type {
+				return failAt("nir.result-type", s.Pos, "select 声明结果 %s，两条分支是 %s", s.Type, thenType)
+			}
+			if thenType != TypeNumber && thenType != TypeBool {
+				return failAt("nir.result-type", s.Pos, "select 的结果不能是 %s", thenType)
+			}
+			if _, exists := sc.names[s.Name]; exists {
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 重复定义", f.Name, s.Name)
+			}
+			if _, exists := sc.params[s.Name]; exists {
+				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 与参数重复", f.Name, s.Name)
+			}
+			sc.names[s.Name] = thenType
 		}
 	}
 	return nil

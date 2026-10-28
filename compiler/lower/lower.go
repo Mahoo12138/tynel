@@ -466,6 +466,8 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir
 		return &nir.Expr{Op: nir.OpBinary, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, pre, nil
 	case "PrefixUnaryExpression":
 		return l.unary(n, sc, depth)
+	case "ConditionalExpression":
+		return l.conditional(n, sc, depth)
 	case "CallExpression":
 		return l.call(n, sc, depth)
 	default:
@@ -667,6 +669,56 @@ func (l *lowerer) shortCircuit(n *frontend.Node, sc *scope, depth int) (*nir.Exp
 func (l *lowerer) tempName() string {
 	l.temp++
 	return fmt.Sprintf("_tmp_%d", l.temp)
+}
+
+// conditional 降低 cond ? then : else。条件在外层求值一次；两条分支各自带
+// 准备语句，只有被选中的一条执行，结果绑定到临时值。
+func (l *lowerer) conditional(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
+	if len(n.Children) != 3 {
+		return nil, nil, l.fail(n.Start, "lower.bad-arity", "三元式有 %d 个子节点", len(n.Children))
+	}
+	condNode, thenNode, elseNode := &n.Children[0], &n.Children[1], &n.Children[2]
+	if err := l.typedOperand(condNode, frontend.KindBoolean, "三元式的条件"); err != nil {
+		return nil, nil, err
+	}
+	if thenNode.Type == nil || elseNode.Type == nil {
+		return nil, nil, l.fail(n.Start, "lower.bad-type", "三元式的分支缺少类型摘要")
+	}
+	if thenNode.Type.Kind != elseNode.Type.Kind {
+		return nil, nil, l.fail(n.Start, "lower.bad-type", "三元式两条分支类型不同：%s 与 %s", thenNode.Type.Kind, elseNode.Type.Kind)
+	}
+	if thenNode.Type.Kind != frontend.KindNumber && thenNode.Type.Kind != frontend.KindBoolean {
+		return nil, nil, l.fail(n.Start, "lower.bad-type", "三元式的结果不能是 %s", thenNode.Type.Kind)
+	}
+	cond, condPre, err := l.expr(condNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	then, thenPre, err := l.expr(thenNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	els, elsePre, err := l.expr(elseNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := l.tempName()
+	resultType := nir.TypeNumber
+	if thenNode.Type.Kind == frontend.KindBoolean {
+		resultType = nir.TypeBool
+	}
+	pre := append(condPre, nir.Stmt{
+		Op:        nir.OpSelect,
+		Name:      name,
+		Cond:      cond,
+		Then:      thenPre,
+		ThenValue: then,
+		Else:      elsePre,
+		ElseValue: els,
+		Type:      resultType,
+		Pos:       l.pos(n.Start),
+	})
+	return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, pre, nil
 }
 
 // typedOperand 检查一个表达式的类型摘要是不是 want。降低不重新推导类型，

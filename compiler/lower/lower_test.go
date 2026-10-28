@@ -82,6 +82,10 @@ func shortNode(op string, left, right frontend.Node) frontend.Node {
 	return n
 }
 
+func ternaryNode(cond, then, els frontend.Node) frontend.Node {
+	return typed("ConditionalExpression", frontend.KindNumber, cond, then, els)
+}
+
 func consoleLog(arg frontend.Node) frontend.Node {
 	access := typed("PropertyAccessExpression", frontend.KindVoid, ident("console", 0))
 	access.Name = "log"
@@ -659,6 +663,72 @@ func TestRejectsShortMismatch(t *testing.T) {
 	module, err := Lower(snapshot(t), facts)
 	if err == nil || module != nil {
 		t.Fatal("短路左侧为 number 时应被拒绝")
+	}
+	var d *diagnostic.Diagnostic
+	if !errors.As(err, &d) || d.Code != "lower.bad-type" {
+		t.Fatalf("应报 lower.bad-type，实际 %v", err)
+	}
+}
+
+// ternaryFacts 对应：
+//
+//	function pick(n: number, value: number): number { console.log(n); return value; }
+//	console.log(true ? pick(1, 10) : pick(2, 20));
+func ternaryFacts() *frontend.Facts {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	body := node("Block",
+		node("ExpressionStatement", consoleLog(ident("n", 2))),
+		node("ReturnStatement", ident("value", 3)),
+	)
+	module := node("Block",
+		node("ExpressionStatement", consoleLog(
+			ternaryNode(boolLiteral(true),
+				typed("CallExpression", frontend.KindNumber, ident("pick", 1), literal("0x3ff0000000000000"), literal("0x4024000000000000")),
+				typed("CallExpression", frontend.KindNumber, ident("pick", 1), literal("0x4000000000000000"), literal("0x4034000000000000")),
+			),
+		)),
+	)
+	return &frontend.Facts{
+		SchemaVersion: 1,
+		Session:       "s",
+		File:          "/tmp/t.ts",
+		Module:        &module,
+		Declarations: []frontend.Declaration{
+			{ID: 1, Kind: frontend.DeclFunction, Name: "pick", Start: 0, Length: 20, Result: &number, Parameters: []int{2, 3}, Body: &body},
+			{ID: 2, Kind: frontend.DeclParameter, Name: "n", Start: 4, Length: 1, Type: &number},
+			{ID: 3, Kind: frontend.DeclParameter, Name: "value", Start: 6, Length: 5, Type: &number},
+		},
+	}
+}
+
+func TestLowersSelect(t *testing.T) {
+	module := lowerFacts(t, ternaryFacts())
+	main := module.Functions[1]
+	if len(main.Body) != 3 {
+		t.Fatalf("main 的形状不对：%+v", main)
+	}
+	got := main.Body[0]
+	if got.Op != nir.OpSelect || got.Type != nir.TypeNumber || got.Name == "" {
+		t.Fatalf("第一条应是 number 的 select：%+v", got)
+	}
+	if got.ThenValue == nil || got.ThenValue.Op != nir.OpCall {
+		t.Fatalf("thenValue 应是调用：%+v", got.ThenValue)
+	}
+	if got.ElseValue == nil || got.ElseValue.Op != nir.OpCall {
+		t.Fatalf("elseValue 应是调用：%+v", got.ElseValue)
+	}
+	if main.Body[1].Op != nir.OpPrint || main.Body[1].Value == nil || main.Body[1].Value.Op != nir.OpLocal {
+		t.Fatalf("第二条应打印 select 结果：%+v", main.Body[1])
+	}
+}
+
+func TestRejectsSelectMismatch(t *testing.T) {
+	facts := ternaryFacts()
+	init := facts.Module.Children[0].Children[0].Children[1]
+	init.Children[1] = boolLiteral(true)
+	module, err := Lower(snapshot(t), facts)
+	if err == nil || module != nil {
+		t.Fatal("三元式分支类型不同应被拒绝")
 	}
 	var d *diagnostic.Diagnostic
 	if !errors.As(err, &d) || d.Code != "lower.bad-type" {

@@ -103,6 +103,7 @@ deadlocals / escape / walk / SSA / obj / link
 | `return` | `ir.NewReturnStmt` |
 | `if` | `ir.NewIfStmt`，`then` 与 `else` 各自构造成 `[]ir.Node` |
 | `short` | 一个 `ir.BlockStmt`：先把左侧赋给 bool 局部值，再用 `ir.NewIfStmt` 决定是否执行右侧准备块并把结果写回 |
+| `select` | 一个 `ir.BlockStmt`，里面是带 `then` / `else` 的 `ir.NewIfStmt`；两个分支各自执行准备块，再把结果赋给同一个局部值 |
 | `let` | `fn.NewLocal` 造一个自动变量，再生成一条赋值；类型跟着值走 |
 | `print` | 调用支持函数的 `OCALL`，作为语句直接放进函数体；`number` 与 `bool` 各有一个目标函数 |
 
@@ -138,6 +139,12 @@ NIR 的 `if` 直接对应 `ir.NewIfStmt`，`then` 与 `else` 各自构造成 `[]
 NIR 的 `short` 展开成一个 `ir.BlockStmt`：先把左侧赋给一个 bool 局部值；`&&` 用这个值作条件，`||` 用它的 `ONOT`；条件成立时执行右侧准备块，再把右值赋回同一个局部值。这个局部值就是后续 `local` 引用读到的结果。
 
 右侧准备块用子作用域构造，里面的局部变量只在条件成立时执行，也不会泄漏到外层。bridge 不把 `&&` / `||` 直接交给 Go 的二元表达式，而是显式生成条件赋值——这样右侧的准备工作、临时值和赋值顺序都留在 `if` 内部，和 NIR 的形状一一对应。
+
+## 三元式的结果绑定
+
+NIR 的 `select` 也展开成一个 `ir.BlockStmt`：里面是一个带 `then` / `else` 的 `ir.IfStmt`。两个分支各自先用子作用域构造准备块，再把 `thenValue` / `elseValue` 赋给同一个局部值。局部值的类型取自 NIR 的 `type`，不依赖表达式节点在 typecheck 之前的空类型。
+
+Go 看到的是 `if cond { ... } else { ... }`，没有三元表达式；两条分支的赋值在 Go 的 typecheck 里各自成立，结果在后续语句里读取。
 
 ## 构造结果长什么样
 

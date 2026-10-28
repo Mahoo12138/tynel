@@ -117,6 +117,28 @@ func TestBoolRequiresValue(t *testing.T) {
 	}
 }
 
+func TestMutableSurvivesEncoding(t *testing.T) {
+	m := minimalModule()
+	m.Functions[0].Body = []Stmt{
+		{Op: OpLet, Name: "x", Value: &Expr{Op: OpNumber, Bits: BitsOf(1)}, Mutable: true},
+		{Op: OpPrint, Value: &Expr{Op: OpLocal, Name: "x"}},
+	}
+	data, err := EncodeBytes(m)
+	if err != nil {
+		t.Fatalf("编码 let 失败：%v", err)
+	}
+	if !bytes.Contains(data, []byte(`"mutable": true`)) {
+		t.Fatalf("可变的 let 必须写出 mutable：%s", data)
+	}
+	back, err := DecodeBytes(data, DefaultLimits())
+	if err != nil {
+		t.Fatalf("回读 let 失败：%v", err)
+	}
+	if got := back.Functions[0].Body[0]; !got.Mutable {
+		t.Fatalf("let 的 mutable 保存后丢失：%+v", got)
+	}
+}
+
 func TestCompareRequiresOperands(t *testing.T) {
 	_, err := DecodeBytes([]byte(`{"schemaVersion":1,"entry":"main","functions":[
 		{"name":"main","params":[],"result":"void","body":[{"op":"print","value":{"op":"compare","operator":"<","left":{"op":"number","bits":"0x3ff0000000000000"}}}]}]}`), DefaultLimits())
@@ -205,6 +227,7 @@ func TestDecodeRejectsInvalidStructure(t *testing.T) {
 			m.Functions[0].Body[0].Op = OpDiscard
 			m.Functions[0].Body[0].Name = "x"
 		}, "nir.unexpected-field"},
+		{"print 带 mutable", func(m *Module) { m.Functions[0].Body[0].Mutable = true }, "nir.unexpected-field"},
 		{"未知语句 op", func(m *Module) { m.Functions[0].Body[0].Op = "jump" }, "nir.bad-op"},
 		{"未知表达式 op", func(m *Module) { m.Functions[0].Body[0].Value.Op = "magic" }, "nir.bad-op"},
 		{"number 带 name", func(m *Module) { m.Functions[0].Body[0].Value.Name = "x" }, "nir.unexpected-field"},

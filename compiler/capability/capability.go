@@ -64,8 +64,12 @@ func (c *checker) declaration(d *frontend.Declaration) {
 		if d.Body != nil && d.Body.Type != nil && d.Body.Type.Kind == frontend.KindVoid {
 			c.report(d.Body.Start, "cap.void-value", "常量 %q 的初始值是 void 调用，没有可用的值", d.Name)
 		}
-	case frontend.DeclLocal:
+	case frontend.DeclLocal, frontend.DeclLet:
 		c.declaredType(d.Type, d.Start, "局部值 %q ", d.Name, frontend.KindNumber, frontend.KindBoolean)
+	case frontend.DeclModuleLet:
+		c.report(d.Start, "cap.module-let", "模块级 let %q 不在本阶段子集内；模块体只接受 const", d.Name)
+	case frontend.DeclVar:
+		c.report(d.Start, "cap.unsupported-syntax", "var %q 不在本阶段子集内；局部值只支持 const 与 let", d.Name)
 	}
 }
 
@@ -131,6 +135,15 @@ func (c *checker) node(n *frontend.Node) {
 			c.node(&n.Children[i])
 		}
 	case "VariableStatement":
+		if n.Decl != 0 {
+			if decl, ok := c.facts.Declaration(n.Decl); ok {
+				// 模块级 let/var 已经在 declaration 里报过一次，这里只跳过
+				// 模块体节点，避免同一个声明产生两条诊断。
+				if decl.Kind == frontend.DeclModuleLet || decl.Kind == frontend.DeclVar {
+					return
+				}
+			}
+		}
 		list := variableList(n)
 		if list == nil {
 			c.report(n.Start, "cap.unsupported-syntax", "局部变量语句缺少声明列表")
@@ -145,11 +158,11 @@ func (c *checker) node(n *frontend.Node) {
 		c.children(n)
 	case "VariableDeclaration":
 		if n.Decl == 0 {
-			c.report(n.Start, "cap.unsupported-syntax", "局部 let/var 不在本阶段子集内，只支持 const")
+			c.report(n.Start, "cap.unsupported-syntax", "局部 var 不在本阶段子集内；局部值只支持 const 与 let")
 			return
 		}
 		decl, ok := c.facts.Declaration(n.Decl)
-		if !ok || decl.Kind != frontend.DeclLocal {
+		if !ok || (decl.Kind != frontend.DeclLocal && decl.Kind != frontend.DeclLet) {
 			c.report(n.Start, "cap.unknown-name", "局部变量没有对应的声明")
 			return
 		}
@@ -327,9 +340,9 @@ func (c *checker) identifier(n *frontend.Node) {
 		if c.inFunction {
 			c.report(n.Start, "cap.module-const-in-function", "函数内引用模块常量 %q 需要全局变量，本阶段不支持", n.Name)
 		}
-	case frontend.DeclLocal:
-		// 局部 const 可以在当前块及其子块里读取；越界读取由 TypeScript 报
-		// 「找不到名称」，能力检查不重复做作用域分析。
+	case frontend.DeclLocal, frontend.DeclLet:
+		// 局部 const 与已初始化的 let 可以在当前块及其子块里读取；越界读取
+		// 由 TypeScript 报「找不到名称」，能力检查不重复做作用域分析。
 	}
 }
 

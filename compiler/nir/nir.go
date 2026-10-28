@@ -123,6 +123,7 @@ type Stmt struct {
 	ThenValue *Expr  `json:"thenValue,omitempty"` // 仅 select 使用
 	ElseValue *Expr  `json:"elseValue,omitempty"` // 仅 select 使用
 	Type      string `json:"type,omitempty"`      // 仅 select 使用，number 或 bool
+	Mutable   bool   `json:"mutable,omitempty"`   // 仅 let 使用：是否为可变的 let
 	Pos       *Pos   `json:"pos,omitempty"`
 }
 

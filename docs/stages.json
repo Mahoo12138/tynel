@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "03.08",
+  "currentImplementationNode": "04.01",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -425,7 +425,7 @@
       "dependsOn": [
         "03"
       ],
-      "status": "planned",
+      "status": "active",
       "plannedNote": "docs/notes/04-loops.md",
       "goal": "初始化局部变量、赋值、while、递归和退出路径",
       "gateSubnode": "04.07",
@@ -437,9 +437,12 @@
             "03.08"
           ],
           "planSection": "PLAN.md#task-04-01",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/mutability.md",
+            "docs/validation/04-01-mutability.md"
+          ]
         },
         {
           "id": "04.02",

@@ -659,6 +659,7 @@ type stmt struct {
 	ThenValue *expr  `json:"thenValue"`
 	ElseValue *expr  `json:"elseValue"`
 	Type      string `json:"type"`
+	Mutable   bool   `json:"mutable"`
 }
 
 type expr struct {

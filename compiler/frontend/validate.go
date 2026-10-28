@@ -52,13 +52,17 @@ func (f *Facts) Validate() error {
 			if err := requireType("函数 "+d.Name, d.Result, d.Type); err != nil {
 				return err
 			}
-		case DeclParameter, DeclConst, DeclLocal:
+		case DeclParameter, DeclConst, DeclLocal, DeclLet, DeclModuleLet, DeclVar:
 			if err := requireType(d.Kind.String()+" "+d.Name, d.Type, d.Result); err != nil {
 				return err
 			}
 			if len(d.Parameters) > 0 {
 				return diagnostic.New(diagnostic.Internal, "facts.bad-decl", "%s %q 不应带参数列表", d.Kind, d.Name)
 			}
+		}
+		mutable := d.Kind == DeclLet || d.Kind == DeclModuleLet || d.Kind == DeclVar
+		if d.Mutable != mutable {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-mutable", "声明 %q 的 mutable 为 %t，与种类 %s 不符", d.Name, d.Mutable, d.Kind)
 		}
 		byID[d.ID] = d
 	}
@@ -208,7 +212,8 @@ func (f *Facts) validateNode(n *Node, depth int, nodes *int) error {
 		if !ok {
 			return diagnostic.New(diagnostic.Internal, "facts.unknown-target", "%s 引用了不存在的声明 ID %d", n.Kind, n.Decl)
 		}
-		if decl.Kind != DeclConst && decl.Kind != DeclLocal {
+		if decl.Kind != DeclConst && decl.Kind != DeclLocal && decl.Kind != DeclLet &&
+			decl.Kind != DeclModuleLet && decl.Kind != DeclVar {
 			return diagnostic.New(diagnostic.Internal, "facts.bad-decl-ref", "%s 引用的声明 %q 不是常量或局部值", n.Kind, decl.Name)
 		}
 	}
@@ -254,6 +259,14 @@ func (k DeclKind) String() string {
 		return "参数"
 	case DeclConst:
 		return "常量"
+	case DeclLocal:
+		return "局部常量"
+	case DeclLet:
+		return "局部变量"
+	case DeclModuleLet:
+		return "模块级变量"
+	case DeclVar:
+		return "var 变量"
 	}
 	return string(k)
 }

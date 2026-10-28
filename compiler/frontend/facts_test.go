@@ -60,6 +60,7 @@ func TestValidateRejectsInconsistentFacts(t *testing.T) {
 		{"参数没有归属", func(f *Facts) { f.Declarations[0].Parameters = []int{2} }, "facts.orphan-parameter"},
 		{"参数 ID 指向函数", func(f *Facts) { f.Declarations[0].Parameters = []int{1} }, "facts.bad-parameter"},
 		{"声明种类不认识", func(f *Facts) { f.Declarations[1].Kind = "variable" }, "facts.bad-decl-kind"},
+		{"可变性与种类不符", func(f *Facts) { f.Declarations[1].Mutable = true }, "facts.bad-mutable"},
 		{"类型类别带空格", func(f *Facts) { f.Declarations[1].Type.Kind = "number " }, "facts.bad-type"},
 		{"类型类别大小写不符", func(f *Facts) { f.Declarations[1].Type.Kind = "Number" }, "facts.bad-type"},
 		{"位置为负", func(f *Facts) { f.References[0].Start = -1 }, "facts.bad-position"},

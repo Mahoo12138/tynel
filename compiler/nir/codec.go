@@ -219,6 +219,9 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 		if prelude && s.Op != OpLet && s.Op != OpShort && s.Op != OpSelect {
 			return badf("nir.bad-op", "%s（表达式准备块）只接受 let、short 或 select", spath)
 		}
+		if s.Mutable && s.Op != OpLet {
+			return badf("nir.unexpected-field", "%s（op=%s）不接受字段 mutable", spath, s.Op)
+		}
 		switch s.Op {
 		case OpReturn, OpPrint, OpLet, OpDiscard:
 			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 || s.ThenValue != nil || s.ElseValue != nil || s.Type != "" {

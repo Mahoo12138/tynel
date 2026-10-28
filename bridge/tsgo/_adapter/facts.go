@@ -34,6 +34,7 @@ type factDeclaration struct {
 	Result     *factType `json:"result,omitempty"`
 	Parameters []int     `json:"parameters,omitempty"`
 	Body       *factNode `json:"body,omitempty"`
+	Mutable    bool      `json:"mutable,omitempty"`
 }
 
 // factNode 是函数体或初始化表达式的语法骨架。
@@ -208,6 +209,7 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 						Kind:   "VariableStatement",
 						Start:  b.startOf(stmt),
 						Length: stmt.End() - b.startOf(stmt),
+						Decl:   b.payload.Declarations[item.index].ID,
 					})
 				}
 			}
@@ -298,17 +300,24 @@ func (b *factBuilder) declareLocals(node *ast.Node) {
 	if node == nil {
 		return
 	}
-	if ast.IsVariableDeclaration(node) && ast.IsVarConst(node) {
+	if ast.IsVariableDeclaration(node) && (ast.IsVarConst(node) || ast.IsVarLet(node)) {
 		if name := node.Name(); name != nil && ast.IsIdentifier(name) {
 			typ := b.typeOf(b.checker.GetTypeAtLocation(name))
 			id := b.declare(b.checker.GetSymbolAtLocation(name))
+			kind := "local"
+			mutable := false
+			if ast.IsVarLet(node) {
+				kind = "let"
+				mutable = true
+			}
 			b.payload.Declarations = append(b.payload.Declarations, factDeclaration{
-				ID:     id,
-				Kind:   "local",
-				Name:   name.Text(),
-				Start:  b.startOf(node),
-				Length: node.End() - b.startOf(node),
-				Type:   &typ,
+				ID:      id,
+				Kind:    kind,
+				Name:    name.Text(),
+				Start:   b.startOf(node),
+				Length:  node.End() - b.startOf(node),
+				Type:    &typ,
+				Mutable: mutable,
 			})
 			b.declNameNodes[name] = true
 		}
@@ -323,13 +332,24 @@ func (b *factBuilder) declareVariable(node *ast.Node) pending {
 	decl := node.AsVariableDeclaration()
 	name := decl.Name()
 	typ := b.typeOf(b.checker.GetTypeAtLocation(name))
+	kind := "const"
+	mutable := false
+	switch {
+	case ast.IsVarLet(node):
+		kind = "module-let"
+		mutable = true
+	case !ast.IsVarConst(node):
+		kind = "var"
+		mutable = true
+	}
 	b.payload.Declarations = append(b.payload.Declarations, factDeclaration{
-		ID:     b.declare(b.checker.GetSymbolAtLocation(name)),
-		Kind:   "const",
-		Name:   name.Text(),
-		Start:  b.startOf(node),
-		Length: node.End() - b.startOf(node),
-		Type:   &typ,
+		ID:      b.declare(b.checker.GetSymbolAtLocation(name)),
+		Kind:    kind,
+		Name:    name.Text(),
+		Start:   b.startOf(node),
+		Length:  node.End() - b.startOf(node),
+		Type:    &typ,
+		Mutable: mutable,
 	})
 	b.declNameNodes[name] = true
 	return pending{index: len(b.payload.Declarations) - 1, node: node, isFunc: false}

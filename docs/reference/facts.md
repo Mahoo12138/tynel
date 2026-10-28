@@ -53,11 +53,27 @@ const doubled: number = scale(answer);
 
 需要跨运行稳定的身份时，用「名字 + 声明起点」，不要用 ID。
 
+## 声明种类与可变性
+
+`kind` 区分声明的来源，`mutable` 说明它在后续赋值里是否可写：
+
+| `kind` | 来源 | `mutable` |
+| --- | --- | --- |
+| `function` | 顶层函数 | `false` |
+| `parameter` | 函数参数 | `false` |
+| `const` | 模块级 `const` | `false` |
+| `local` | 块内 `const` | `false` |
+| `let` | 块内 `let` | `true` |
+| `module-let` | 模块级 `let` | `true`，能力检查拒绝 |
+| `var` | `var` 声明 | `true`，能力检查拒绝 |
+
+校验会核对 `mutable` 与 `kind` 是否一致；不一致报 `facts.bad-mutable`。这不是冗余字段：降低器和后续赋值只看 `mutable`，种类则用于能力检查和诊断措辞，两者分开后，手写事实也不能把 `const` 标成可写。
+
 ## 事实里有什么
 
 | 部分 | 内容 |
 | --- | --- |
-| `declarations` | 顶层函数、它们的参数、顶层 const、函数体内的局部 const |
+| `declarations` | 顶层函数、它们的参数、顶层 const、函数体内的局部 const 与 let |
 | `references` | 函数体与初始化表达式里的每一次名称出现，带解析到的声明 ID |
 | `calls` | 函数体与初始化表达式里的调用位置、被调用者 ID、实参类型、结果类型 |
 | `expressions` | 数字字面量、布尔字面量、二元运算、调用和标识符，各带类型摘要 |
@@ -90,7 +106,7 @@ const doubled: number = scale(answer);
 - `name` 与 `target` 只出现在标识符和属性访问上；属性访问的 `name` 是属性名，`children` 只有对象那一侧。
 - 树里只有语句、表达式和变量声明。类型节点（`a: number` 的 `number`）、修饰符、名字令牌都不进树——否则类型名会被当成变量引用。
 - `true` 与 `false` 是 `TrueKeyword` / `FalseKeyword` 节点，类型摘要为 `boolean`。它们没有额外字段，种类本身就区分两个值。
-- 局部 `const` 的 `VariableDeclaration` 带 `decl`（指向 `kind=local` 的声明），`children` 只有初始化表达式。`let` / `var` 不登记声明，`decl` 为 0，能力检查据此拒绝。
+- 局部 `const` 的 `VariableDeclaration` 带 `decl`（指向 `kind=local` 的声明），局部 `let` 指向 `kind=let`，`children` 只有初始化表达式。`var` 不登记声明，`decl` 为 0，能力检查据此拒绝。
 - `IfStatement` 的 `children` 依次是条件、`then` 语句、可选的 `else` 语句；`else if` 是 `else` 位置上的另一个 `IfStatement`。
 
 校验对骨架有预算：深度不超过 100 层、节点不超过 20000 个。超了按内部故障拒绝，避免一段异常深的输入把后续阶段拖垮。
@@ -119,8 +135,9 @@ const doubled: number = scale(answer);
 | 版本 | `schemaVersion` 必须是 1 | `facts.schema` |
 | 会话 | `session` 与 `file` 不能为空 | `facts.no-session` / `facts.no-file` |
 | ID | 正数且不重复 | `facts.bad-id` / `facts.duplicate-id` |
-| 种类 | 只能是 function / parameter / const | `facts.bad-decl-kind` |
-| 类型摘要 | 类别必须在枚举内；函数有返回类型、参数与 const 有类型 | `facts.bad-type` |
+| 种类 | 只能是 function / parameter / const / local / let / module-let / var | `facts.bad-decl-kind` |
+| 类型摘要 | 类别必须在枚举内；函数有返回类型、参数与局部值有类型 | `facts.bad-type` |
+| 可变性 | `mutable` 与种类一致：只有 let / module-let / var 为 true | `facts.bad-mutable` |
 | 参数归属 | 每个参数恰好属于一个函数 | `facts.unknown-target` / `facts.shared-parameter` / `facts.orphan-parameter` |
 | 引用 | `target` 为 0 或指向存在的声明 | `facts.unknown-target` |
 | 调用 | 被调用者是函数；实参个数与形参一致；实参类型与形参一致；结果类型与声明一致 | `facts.call-target` / `facts.arg-count` / `facts.arg-type` / `facts.result-type` |

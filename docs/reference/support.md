@@ -22,7 +22,9 @@
 | 参数 | 支持 | `number` 或 `boolean` |
 | 顶层 `const` | 支持 | 初始化表达式按源码顺序求值 |
 | 块内 `const` | 支持 | 只在当前块可见，同名遮蔽外层 |
-| 局部 `let` | 拒绝 | `cap.unsupported-syntax`，节点 04 处理 |
+| 块内 `let` | 支持 | 必须带初始值；可读、可遮蔽，赋值留给 04.02 |
+| 模块级 `let` | 拒绝 | `cap.module-let`，模块体只接受 `const` |
+| 局部 `var` | 拒绝 | `cap.unsupported-syntax` |
 | 直接函数调用 | 支持 | 实参个数与类型必须匹配 |
 | 递归 | 计划 | 未验证，节点 04.05 |
 | 闭包、嵌套函数 | 拒绝 | `cap.unsupported-syntax` |

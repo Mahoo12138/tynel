@@ -507,6 +507,26 @@ func TestTernary(t *testing.T) {
 	wantCode(t, check(t, facts), "cap.bad-operator")
 }
 
+func TestLocalLetAllowed(t *testing.T) {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	facts := base()
+	facts.Declarations = append(facts.Declarations, frontend.Declaration{
+		ID: 4, Kind: frontend.DeclLet, Name: "x", Start: 30, Length: 1, Type: &number, Mutable: true,
+	})
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("已初始化的局部 let 应通过，实际 %v", codes(findings))
+	}
+}
+
+func TestModuleLetRejected(t *testing.T) {
+	number := frontend.Type{Kind: frontend.KindNumber}
+	facts := base()
+	facts.Declarations = append(facts.Declarations, frontend.Declaration{
+		ID: 4, Kind: frontend.DeclModuleLet, Name: "x", Start: 30, Length: 1, Type: &number, Mutable: true,
+	})
+	wantCode(t, check(t, facts), "cap.module-let")
+}
+
 func TestCallArgumentCountIsChecked(t *testing.T) {
 	facts := base()
 	body := node("Block", node("ExpressionStatement", node("CallExpression", ident("add", 1))))

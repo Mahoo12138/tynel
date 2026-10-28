@@ -49,11 +49,14 @@ const (
 	DeclParameter DeclKind = "parameter"
 	DeclConst     DeclKind = "const"
 	DeclLocal     DeclKind = "local"
+	DeclLet       DeclKind = "let"
+	DeclModuleLet DeclKind = "module-let"
+	DeclVar       DeclKind = "var"
 )
 
 func (k DeclKind) valid() bool {
 	switch k {
-	case DeclFunction, DeclParameter, DeclConst, DeclLocal:
+	case DeclFunction, DeclParameter, DeclConst, DeclLocal, DeclLet, DeclModuleLet, DeclVar:
 		return true
 	}
 	return false
@@ -88,6 +91,7 @@ type Declaration struct {
 	Result     *Type    `json:"result,omitempty"`
 	Parameters []int    `json:"parameters,omitempty"`
 	Body       *Node    `json:"body,omitempty"`
+	Mutable    bool     `json:"mutable,omitempty"`
 }
 
 // Reference 是一次名称引用。Target 为 0 表示没有解析到本文件内的声明。

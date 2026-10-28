@@ -89,13 +89,14 @@ type lowerer struct {
 // 两个声明，按名字查会把它们混成一个。params 只在函数根作用域出现；locals
 // 按语句块分层，子块可以遮蔽父块，退出子块后声明不可见。
 type scope struct {
-	parent *scope
-	params map[int]string
-	locals map[int]string
+	parent  *scope
+	params  map[int]string
+	locals  map[int]string
+	mutable map[int]bool
 }
 
 func (s *scope) child() *scope {
-	return &scope{parent: s, locals: make(map[int]string)}
+	return &scope{parent: s, locals: make(map[int]string), mutable: make(map[int]bool)}
 }
 
 func (s *scope) lookup(id int) (string, bool) {
@@ -119,12 +120,22 @@ func (s *scope) lookupParam(id int) (string, bool) {
 	return "", false
 }
 
-func (s *scope) define(id int, name string) bool {
+func (s *scope) define(id int, name string, mutable bool) bool {
 	if _, exists := s.locals[id]; exists {
 		return false
 	}
 	s.locals[id] = name
+	s.mutable[id] = mutable
 	return true
+}
+
+func (s *scope) isMutable(id int) bool {
+	for cur := s; cur != nil; cur = cur.parent {
+		if _, ok := cur.locals[id]; ok {
+			return cur.mutable[id]
+		}
+	}
+	return false
 }
 
 func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
@@ -139,7 +150,7 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 		Result: nirType(decl.Result.Kind),
 		Pos:    l.pos(decl.Start),
 	}
-	sc := &scope{params: make(map[int]string, len(decl.Parameters)), locals: make(map[int]string)}
+	sc := &scope{params: make(map[int]string, len(decl.Parameters)), locals: make(map[int]string), mutable: make(map[int]bool)}
 	for _, id := range decl.Parameters {
 		param, ok := l.facts.Declaration(id)
 		if !ok || param.Kind != frontend.DeclParameter {
@@ -167,7 +178,7 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 // entry 把模块体降低成入口函数：顶层 const 按源码顺序求值并绑定成局部值。
 func (l *lowerer) entry() (*nir.Function, error) {
 	fn := &nir.Function{Name: EntryName, Result: nir.TypeVoid}
-	sc := &scope{params: map[int]string{}, locals: map[int]string{}}
+	sc := &scope{params: map[int]string{}, locals: map[int]string{}, mutable: map[int]bool{}}
 	if l.facts.Module == nil {
 		fn.Body = []nir.Stmt{{Op: nir.OpReturn}}
 		return fn, nil
@@ -366,7 +377,7 @@ func (l *lowerer) localDeclaration(stmt *frontend.Node, sc *scope) ([]nir.Stmt, 
 		return nil, l.fail(declNode.Start, "lower.bad-declaration", "局部变量缺少声明身份；只支持 const")
 	}
 	decl, ok := l.facts.Declaration(declNode.Decl)
-	if !ok || decl.Kind != frontend.DeclLocal {
+	if !ok || (decl.Kind != frontend.DeclLocal && decl.Kind != frontend.DeclLet) {
 		return nil, l.fail(declNode.Start, "lower.bad-declaration", "局部变量的声明身份 %d 不对", declNode.Decl)
 	}
 	if decl.Type == nil || (decl.Type.Kind != frontend.KindNumber && decl.Type.Kind != frontend.KindBoolean) {
@@ -383,10 +394,10 @@ func (l *lowerer) localDeclaration(stmt *frontend.Node, sc *scope) ([]nir.Stmt, 
 	if err != nil {
 		return nil, err
 	}
-	if !sc.define(decl.ID, decl.Name) {
+	if !sc.define(decl.ID, decl.Name, decl.Mutable) {
 		return nil, l.fail(decl.Start, "lower.duplicate-name", "局部值 %q 在同一个块里重复定义", decl.Name)
 	}
-	return append(pre, nir.Stmt{Op: nir.OpLet, Name: decl.Name, Value: value, Pos: l.pos(stmt.Start)}), nil
+	return append(pre, nir.Stmt{Op: nir.OpLet, Name: decl.Name, Value: value, Mutable: decl.Mutable, Pos: l.pos(stmt.Start)}), nil
 }
 
 func variableList(stmt *frontend.Node) *frontend.Node {
@@ -488,7 +499,7 @@ func (l *lowerer) identifier(n *frontend.Node, sc *scope) (*nir.Expr, error) {
 			return nil, l.fail(n.Start, "lower.module-const-in-function", "模块常量 %q 在函数内不可见", n.Name)
 		}
 		return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil
-	case frontend.DeclLocal:
+	case frontend.DeclLocal, frontend.DeclLet:
 		name, ok := sc.lookup(decl.ID)
 		if !ok {
 			return nil, l.fail(n.Start, "lower.unknown-name", "局部值 %q 不在当前作用域内", n.Name)

@@ -62,6 +62,7 @@ const (
 	OpShort   = "short"
 	OpSelect  = "select"
 	OpSet     = "set"
+	OpWhile   = "while"
 )
 
 // BinaryOperators 是首版允许的算术运算符，顺序用于报错提示。
@@ -125,6 +126,8 @@ type Stmt struct {
 	ElseValue *Expr  `json:"elseValue,omitempty"` // 仅 select 使用
 	Type      string `json:"type,omitempty"`      // 仅 select 使用，number 或 bool
 	Mutable   bool   `json:"mutable,omitempty"`   // 仅 let 使用：是否为可变的 let
+	CondPre   []Stmt `json:"condPre,omitempty"`   // 仅 while 使用：每轮条件准备
+	Body      []Stmt `json:"body,omitempty"`      // 仅 while 使用：循环体
 	Pos       *Pos   `json:"pos,omitempty"`
 }
 

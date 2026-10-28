@@ -466,6 +466,33 @@ func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {
 			return nil, err
 		}
 		return ir.NewAssignStmt(b.pos, local, value), nil
+	case "while":
+		if s.Cond == nil {
+			return nil, fmt.Errorf("while 缺少 cond")
+		}
+		// Go 的 for 条件不能带准备语句。条件准备放进循环体开头，每轮重新
+		// 执行；条件为假时用 break 退出。这样 side effect 与 NIR 的 CondPre
+		// 一致，而不是只算一次。
+		condScope := sc.child()
+		condPre, err := b.stmts(s.CondPre, condScope)
+		if err != nil {
+			return nil, err
+		}
+		cond, err := b.expr(s.Cond, condScope)
+		if err != nil {
+			return nil, err
+		}
+		body, err := b.stmts(s.Body, sc.child())
+		if err != nil {
+			return nil, err
+		}
+		loopBody := append(condPre, ir.NewIfStmt(b.pos,
+			ir.NewUnaryExpr(b.pos, ir.ONOT, cond),
+			[]ir.Node{ir.NewBranchStmt(b.pos, ir.OBREAK, nil)},
+			nil,
+		))
+		loopBody = append(loopBody, body...)
+		return ir.NewForStmt(b.pos, nil, nil, nil, loopBody, false), nil
 	default:
 		return nil, fmt.Errorf("不支持的语句 op %q", s.Op)
 	}
@@ -673,6 +700,8 @@ type stmt struct {
 	ElseValue *expr  `json:"elseValue"`
 	Type      string `json:"type"`
 	Mutable   bool   `json:"mutable"`
+	CondPre   []stmt `json:"condPre"`
+	Body      []stmt `json:"body"`
 }
 
 type expr struct {

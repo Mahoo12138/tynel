@@ -35,6 +35,9 @@
     {"name": "let", "file": "let.ts", "kind": "program", "stdout": "2\n1\ntrue\n", "note": "已初始化的 let 与块内遮蔽"},
     {"name": "assign", "file": "assign.ts", "kind": "program", "stdout": "4\ntrue\n", "note": "数值累加与布尔改写"},
     {"name": "assign-order", "file": "assign-order.ts", "kind": "program", "stdout": "2\n2\n3\n5\n", "note": "右值先求值再写回"},
+    {"name": "sum", "file": "sum.ts", "kind": "program", "stdout": "0\n1\n55\n", "note": "while 零次、一次、多次"},
+    {"name": "while-cond", "file": "while-cond.ts", "kind": "program", "stdout": "0\n1\n2\n3\n3\n", "note": "条件每轮重新求值"},
+    {"name": "while-nested", "file": "while-nested.ts", "kind": "program", "stdout": "1\n1\n1\n1\n4\n", "note": "嵌套循环"},
     {"name": "type-error", "file": "errors/type.ts", "kind": "source-error", "code": "2322", "note": "字符串赋给 number"},
     {"name": "bool-arg", "file": "errors/bool-arg.ts", "kind": "source-error", "code": "2345", "note": "boolean 参数收到 number"},
     {"name": "mixed-compare", "file": "errors/mixed-compare.ts", "kind": "source-error", "code": "2367", "note": "number 与 boolean 比较"},
@@ -75,9 +78,13 @@
     {"name": "assign-value", "file": "errors/assign-value.ts", "kind": "capability", "code": "cap.assignment-value", "note": "赋值作为表达式"},
     {"name": "assign-compound", "file": "errors/assign-compound.ts", "kind": "capability", "code": "cap.compound-assignment", "note": "复合赋值"},
     {"name": "assign-inc", "file": "errors/assign-inc.ts", "kind": "capability", "code": "cap.inc-dec", "note": "自增自减"},
+    {"name": "while-number", "file": "errors/while-number.ts", "kind": "capability", "code": "cap.bad-type", "note": "while 条件不是 boolean"},
+    {"name": "while-scope", "file": "errors/while-scope.ts", "kind": "source-error", "code": "2304", "note": "循环体局部值越界"},
+    {"name": "while-return", "file": "errors/while-return.ts", "kind": "source-error", "code": "2366", "note": "只依赖循环体 return"},
+    {"name": "while-module", "file": "errors/while-module.ts", "kind": "capability", "code": "cap.unsupported-syntax", "note": "模块级 while"},
     {"name": "any", "file": "errors/any.ts", "kind": "capability", "code": "cap.any", "note": "any 没有原生表示"},
     {"name": "void-value", "file": "errors/void-value.ts", "kind": "capability", "code": "cap.void-value", "note": "void 当作值"},
-    {"name": "control-flow", "file": "errors/control.ts", "kind": "capability", "code": "cap.unsupported-syntax", "note": "while 循环"},
+    {"name": "control-flow", "file": "errors/control.ts", "kind": "capability", "code": "cap.unsupported-syntax", "note": "for 循环"},
     {"name": "missing-file", "file": "errors/missing.ts", "kind": "environment", "note": "文件不存在"}
   ]
 }

@@ -36,6 +36,9 @@ func mutableLetStmt(name string, e Expr) Stmt {
 func setStmt(name string, e Expr) Stmt {
 	return Stmt{Op: OpSet, Name: name, Value: &e}
 }
+func whileStmt(cond Expr, condPre, body []Stmt) Stmt {
+	return Stmt{Op: OpWhile, Cond: &cond, CondPre: condPre, Body: body}
+}
 func local(name string) Expr { return Expr{Op: OpLocal, Name: name} }
 func ifStmt(cond Expr, then, els []Stmt) Stmt {
 	return Stmt{Op: OpIf, Cond: &cond, Then: then, Else: els}
@@ -314,6 +317,23 @@ func TestVerifyAssignment(t *testing.T) {
 	}
 }
 
+// TestVerifyWhile 覆盖循环：条件每轮重新检查，循环体可以写外层 let。
+func TestVerifyWhile(t *testing.T) {
+	m := module("main", mainWith(
+		mutableLetStmt("i", num(0)),
+		mutableLetStmt("total", num(0)),
+		whileStmt(compare("<", local("i"), num(3)), nil, []Stmt{
+			setStmt("total", binary("+", local("total"), local("i"))),
+			setStmt("i", binary("+", local("i"), num(1))),
+		}),
+		printStmt(local("total")),
+		retVoid(),
+	))
+	if err := Verify(m); err != nil {
+		t.Fatalf("while 模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -415,6 +435,23 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 		{"set 缺少 value", module("main", mainWith(
 			Stmt{Op: OpSet, Name: "x"},
 		)), "nir.missing"},
+		{"while 条件不是 bool", module("main", mainWith(
+			whileStmt(num(1), nil, nil),
+		)), "nir.condition-type"},
+		{"while 缺少 cond", module("main", mainWith(
+			Stmt{Op: OpWhile, Body: []Stmt{retVoid()}},
+		)), "nir.missing"},
+		{"while 体局部值泄漏", module("main", mainWith(
+			whileStmt(boolLit(false), nil, []Stmt{letStmt("x", num(1))}),
+			printStmt(local("x")),
+		)), "nir.unknown-local"},
+		{"while 条件准备不接受 set", module("main", mainWith(
+			mutableLetStmt("x", num(1)),
+			whileStmt(boolLit(false), []Stmt{setStmt("x", num(2))}, nil),
+		)), "nir.bad-op"},
+		{"while 体 return 不算完整返回", module("main", mainWith(retVoid()),
+			fn("f", TypeNumber, nil, whileStmt(boolLit(false), nil, []Stmt{ret(num(1))})),
+		), "nir.missing-return"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

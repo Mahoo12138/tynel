@@ -318,6 +318,8 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) 
 		return append(pre, nir.Stmt{Op: nir.OpDiscard, Value: value, Pos: l.pos(stmt.Start)}), nil
 	case "IfStatement":
 		return l.ifStatement(stmt, sc)
+	case "WhileStatement":
+		return l.whileStatement(stmt, sc)
 	case "VariableStatement":
 		return l.localDeclaration(stmt, sc)
 	case "Block":
@@ -362,6 +364,33 @@ func (l *lowerer) branchStmts(node *frontend.Node, sc *scope) ([]nir.Stmt, error
 		return l.blockStmts(node, sc)
 	}
 	return l.statement(node, sc)
+}
+
+// whileStatement 降低 `while (cond) { body }`。条件的准备语句放进 CondPre，
+// 验证器和 bridge 会在每一轮重新执行它们；循环体单独开一个子作用域。
+func (l *lowerer) whileStatement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) {
+	if len(stmt.Children) != 2 {
+		return nil, l.fail(stmt.Start, "lower.bad-arity", "while 有 %d 个子节点", len(stmt.Children))
+	}
+	condNode, bodyNode := &stmt.Children[0], &stmt.Children[1]
+	if err := l.typedOperand(condNode, frontend.KindBoolean, "while 的条件"); err != nil {
+		return nil, err
+	}
+	cond, condPre, err := l.expr(condNode, sc, 1)
+	if err != nil {
+		return nil, err
+	}
+	body, err := l.branchStmts(bodyNode, sc.child())
+	if err != nil {
+		return nil, err
+	}
+	return []nir.Stmt{{
+		Op:      nir.OpWhile,
+		CondPre: condPre,
+		Cond:    cond,
+		Body:    body,
+		Pos:     l.pos(stmt.Start),
+	}}, nil
 }
 
 // assignment 降低 `x = value;`。目标必须是当前作用域里的可变 let；右值先

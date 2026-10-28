@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "let", "name": "total", "mutable": true, "value": {"op": "number", "bits": "0x0000000000000000"}},
+        {"op": "let", "name": "i", "mutable": true, "value": {"op": "number", "bits": "0x3ff0000000000000"}},
+        {"op": "while",
+          "cond": {"op": "compare", "operator": "<=",
+            "left": {"op": "local", "name": "i"},
+            "right": {"op": "number", "bits": "0x4024000000000000"}},
+          "body": [
+            {"op": "set", "name": "total", "value": {"op": "binary", "operator": "+",
+              "left": {"op": "local", "name": "total"},
+              "right": {"op": "local", "name": "i"}}},
+            {"op": "set", "name": "i", "value": {"op": "binary", "operator": "+",
+              "left": {"op": "local", "name": "i"},
+              "right": {"op": "number", "bits": "0x3ff0000000000000"}}}
+          ]},
+        {"op": "print", "value": {"op": "local", "name": "total"}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

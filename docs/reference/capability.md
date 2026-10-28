@@ -55,7 +55,7 @@ function neverCalled(n: number): number {
 | 声明 | `function`、参数、顶层 `const`、函数体内 `const` 与已初始化的 `let` | 参数、常量与局部值限 `number`、`boolean`，返回值限 `number`、`boolean` 或 `void`；模块级 `let` 与 `var` 拒绝 |
 | 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!`，比较 `<` `<=` `>` `>=` `===` `!==`，短路 `&&` `\|\|`，三元式 `? :` | 有序比较只接受 `number`；严格相等要求两侧同类型；`&&` / `\|\|` 两侧都必须是 `boolean`；三元式的条件必须是 `boolean`，两臂同类型 |
 | 调用 | 本文件内声明的函数，实参个数与形参一致 | 不支持函数值、方法调用 |
-| 语句 | `return`、表达式语句、语句块、`if` / `else` / `else if`、分支内 `const` 与已初始化的 `let`、独立的简单赋值 | 表达式语句的结果被丢弃；`if` 的条件必须是 `boolean`；赋值只支持 `x = value;` |
+| 语句 | `return`、表达式语句、语句块、`if` / `else` / `else if`、`while`、分支内 `const` 与已初始化的 `let`、独立的简单赋值 | 表达式语句的结果被丢弃；`if` / `while` 的条件必须是 `boolean`；赋值只支持 `x = value;` |
 | 输出 | `console.log(<number 或 boolean>)` | 必须是内置 `console`，见下 |
 
 `boolean` 现在是完整的标量：可以作为常量、参数、返回值和输出。`!` 只对 `boolean` 取反；TypeScript 允许 `!1`，但本阶段不把数字的真假转换带进原生后端，`!1` 按 `cap.bad-type` 拒绝。
@@ -69,6 +69,8 @@ function neverCalled(n: number): number {
 分支支持 `if`、`else`、`else if` 和嵌套分支。条件必须是 `boolean`；`if (1)` 在 TypeScript 里合法，能力检查按 `cap.bad-type` 拒绝。函数体内可以声明 `const` 和带初始值的 `let`，作用域是所在的块；未初始化的 `let` 按 `cap.unsupported-syntax` 拒绝，模块级 `let` 按 `cap.module-let` 拒绝，`var` 按 `cap.unsupported-syntax` 拒绝。能力检查会遍历未选中的分支，`if (false) { ... }` 里的未实现写法同样拒绝。
 
 简单赋值只支持 `x = value;` 这种独立语句，目标必须是可变的 `let`，右值与目标同类型。给 `const`、参数或模块常量赋值报 `cap.assign-immutable`；赋值出现在表达式里报 `cap.assignment-value`；复合赋值报 `cap.compound-assignment`；`++` / `--` 报 `cap.inc-dec`。
+
+`while` 的条件必须是 `boolean`，循环体在函数体内，可以包含 `if`、赋值和嵌套 `while`。条件每轮重新求值，循环可能零次执行；模块级 `while` 报 `cap.unsupported-syntax`。`for`、`do`、`break` 和 `continue` 仍不在子集内。
 
 ## void 与丢弃结果
 
@@ -94,7 +96,7 @@ const x = announce(1);     // 拒绝：void 没有值可以绑
 | --- | --- |
 | `cap.any` | 参数、返回值或常量声明为 `any` / `unknown` |
 | `cap.type-escape` | `as`、`<T>x`、后缀 `!`（非空断言）、`satisfies` 这类绕过检查的写法 |
-| `cap.unsupported-syntax` | 对象、数组、字符串、循环、未初始化的 `let`、`var`、`new`、嵌套函数等本阶段不支持的语法 |
+| `cap.unsupported-syntax` | 对象、数组、字符串、`for` / `do`、未初始化的 `let`、`var`、`new`、嵌套函数等本阶段不支持的语法 |
 | `cap.unknown-callee` | 调用目标不是本文件声明的函数，也不是 `console.log` |
 | `cap.forbidden-global` | 调用 `eval` |
 | `cap.shadowed-console` | `console` 被本文件的声明遮蔽 |

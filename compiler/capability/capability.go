@@ -139,6 +139,17 @@ func (c *checker) node(n *frontend.Node) {
 		for i := 1; i < len(n.Children); i++ {
 			c.node(&n.Children[i])
 		}
+	case "WhileStatement":
+		if !c.inFunction {
+			c.report(n.Start, "cap.unsupported-syntax", "模块级 while 不在本阶段子集内")
+			return
+		}
+		if len(n.Children) != 2 {
+			c.report(n.Start, "cap.unsupported-syntax", "while 有 %d 个子节点", len(n.Children))
+			return
+		}
+		c.boolOperand(&n.Children[0], "while 的条件")
+		c.node(&n.Children[1])
 	case "VariableStatement":
 		if n.Decl != 0 {
 			if decl, ok := c.facts.Declaration(n.Decl); ok {
@@ -285,7 +296,7 @@ func (c *checker) node(n *frontend.Node) {
 		c.report(n.Start, "cap.unsupported-syntax", "数组字面量不在本阶段子集内")
 	case "StringLiteral", "NoSubstitutionTemplateLiteral", "TemplateExpression":
 		c.report(n.Start, "cap.unsupported-syntax", "字符串不在本阶段子集内")
-	case "WhileStatement", "DoStatement", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "TryStatement", "ThrowStatement":
+	case "DoStatement", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "TryStatement", "ThrowStatement":
 		c.report(n.Start, "cap.unsupported-syntax", "控制流 %s 不在本阶段子集内", n.Kind)
 	case "NewExpression":
 		c.report(n.Start, "cap.unsupported-syntax", "new 表达式不在本阶段子集内")

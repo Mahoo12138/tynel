@@ -6,13 +6,16 @@
 package native
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Mahoo12138/tynel/internal/build"
 	"github.com/Mahoo12138/tynel/internal/toolchain"
@@ -79,6 +82,34 @@ func TestFixtureOutputs(t *testing.T) {
 				t.Fatalf("输出为 %q，期望 %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestLoopTerminates 用独立进程和超时运行 while 累加。条件或回边写错时，
+// 程序可能永远不退出；没有超时的测试会挂住整个包，而不是给出一条失败。
+func TestLoopTerminates(t *testing.T) {
+	root := repoRoot(t)
+	output := filepath.Join(t.TempDir(), "sum")
+	if _, err := build.Run(build.Options{
+		Root:   root,
+		Input:  filepath.Join(root, "tests", "native", "fixtures", "sum.nir.json"),
+		Output: output,
+	}, toolchain.Exec{}); err != nil {
+		t.Fatalf("构建循环夹具失败：%v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, output)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatal("循环夹具在 5 秒内没有结束；检查条件求值与回边")
+	}
+	if err != nil {
+		t.Fatalf("运行循环夹具失败：%v\n%s", err, out)
+	}
+	if got := string(out); got != "55\n" {
+		t.Fatalf("循环夹具输出 %q，期望 %q", got, "55\n")
 	}
 }
 

@@ -80,6 +80,6 @@ let y: number = y;      // 拒绝：TypeScript 先报使用前声明
 
 04.02 在这层标记上实现了简单赋值：`x = value;` 先求值右侧，再写入可变的 `let`，`x = x + 1` 读到的是写入前的值。给 `const`、参数或模块常量赋值仍然拒绝；赋值表达式、复合赋值和自增自减也拒绝。
 
-还不能做到：`while` 和 `for`。下一节让 `while` 每轮重新检查条件，把“两次读取之间的写入”放进循环。
+04.03 让 `while` 每轮重新检查条件，循环体里的写入在下一轮条件检查前生效。`break` / `continue` 留给 04.04。
 
-相关材料：[声明身份与事实](facts.md)、[NIR 格式](nir.md)、[原生能力白名单](capability.md)、[从源码到 NIR](lowering.md)、[本阶段验证记录](../validation/04-01-mutability.md)、[04.02 验收记录](../validation/04-02-assignment.md)。
+相关材料：[声明身份与事实](facts.md)、[NIR 格式](nir.md)、[原生能力白名单](capability.md)、[从源码到 NIR](lowering.md)、[本阶段验证记录](../validation/04-01-mutability.md)、[04.02 验收记录](../validation/04-02-assignment.md)、[04.03 验收记录](../validation/04-03-while.md)。

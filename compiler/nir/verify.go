@@ -157,6 +157,21 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 			if got != want {
 				return failAt("nir.assign-type", s.Pos, "set 的目标 %q 是 %s，右值是 %s", s.Name, want, got)
 			}
+		case OpWhile:
+			condScope := sc.child()
+			if err := c.stmts(s.CondPre, condScope, f); err != nil {
+				return err
+			}
+			cond, err := c.exprType(s.Cond, condScope)
+			if err != nil {
+				return err
+			}
+			if cond != TypeBool {
+				return failAt("nir.condition-type", s.Pos, "while 的条件必须是 bool，实际为 %s", cond)
+			}
+			if err := c.stmts(s.Body, sc.child(), f); err != nil {
+				return err
+			}
 		case OpIf:
 			got, err := c.exprType(s.Cond, sc)
 			if err != nil {

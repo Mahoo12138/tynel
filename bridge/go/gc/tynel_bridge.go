@@ -453,6 +453,19 @@ func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {
 		return ir.NewBlockStmt(b.pos, []ir.Node{
 			ir.NewIfStmt(b.pos, cond, thenBody, elseBody),
 		}), nil
+	case "set":
+		if s.Name == "" || s.Value == nil {
+			return nil, fmt.Errorf("set 缺少 name 或 value")
+		}
+		local, ok := sc.lookup(s.Name)
+		if !ok {
+			return nil, fmt.Errorf("set 的目标 %q 不在作用域里", s.Name)
+		}
+		value, err := b.expr(s.Value, sc)
+		if err != nil {
+			return nil, err
+		}
+		return ir.NewAssignStmt(b.pos, local, value), nil
 	default:
 		return nil, fmt.Errorf("不支持的语句 op %q", s.Op)
 	}

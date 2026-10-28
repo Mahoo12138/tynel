@@ -76,8 +76,10 @@ let y: number = y;      // 拒绝：TypeScript 先报使用前声明
 
 ## 这一节之后
 
-现在能做到：块内 `let` 带初始值声明，类型为 `number` 或 `boolean`，可以读取，可以遮蔽外层同名声明；`const`、参数、`let` 在事实和 NIR 里有明确的可变性标记。
+现在能做到：块内 `let` 带初始值声明，类型为 `number` 或 `boolean`，可以读取、可以遮蔽外层同名声明；`const`、参数、`let` 在事实和 NIR 里有明确的可变性标记。
 
-还不能做到：给 `let` 赋值。`x = x + 1` 仍会被能力检查拒绝，`while` 也没有实现。下一节先做简单赋值，让“两次读取之间的写入”真正发生，再让 `while` 每轮重新检查条件。
+04.02 在这层标记上实现了简单赋值：`x = value;` 先求值右侧，再写入可变的 `let`，`x = x + 1` 读到的是写入前的值。给 `const`、参数或模块常量赋值仍然拒绝；赋值表达式、复合赋值和自增自减也拒绝。
 
-相关材料：[声明身份与事实](facts.md)、[NIR 格式](nir.md)、[原生能力白名单](capability.md)、[从源码到 NIR](lowering.md)、[本阶段验证记录](../validation/04-01-mutability.md)。
+还不能做到：`while` 和 `for`。下一节让 `while` 每轮重新检查条件，把“两次读取之间的写入”放进循环。
+
+相关材料：[声明身份与事实](facts.md)、[NIR 格式](nir.md)、[原生能力白名单](capability.md)、[从源码到 NIR](lowering.md)、[本阶段验证记录](../validation/04-01-mutability.md)、[04.02 验收记录](../validation/04-02-assignment.md)。

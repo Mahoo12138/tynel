@@ -30,6 +30,12 @@ func discard(e Expr) Stmt   { return Stmt{Op: OpDiscard, Value: &e} }
 func letStmt(name string, e Expr) Stmt {
 	return Stmt{Op: OpLet, Name: name, Value: &e}
 }
+func mutableLetStmt(name string, e Expr) Stmt {
+	return Stmt{Op: OpLet, Name: name, Value: &e, Mutable: true}
+}
+func setStmt(name string, e Expr) Stmt {
+	return Stmt{Op: OpSet, Name: name, Value: &e}
+}
 func local(name string) Expr { return Expr{Op: OpLocal, Name: name} }
 func ifStmt(cond Expr, then, els []Stmt) Stmt {
 	return Stmt{Op: OpIf, Cond: &cond, Then: then, Else: els}
@@ -295,6 +301,19 @@ func TestVerifySelect(t *testing.T) {
 	}
 }
 
+// TestVerifyAssignment 覆盖 set：目标必须是可变的 let，右值与目标同类型。
+func TestVerifyAssignment(t *testing.T) {
+	m := module("main", mainWith(
+		mutableLetStmt("x", num(1)),
+		setStmt("x", binary("+", local("x"), num(1))),
+		printStmt(local("x")),
+		retVoid(),
+	))
+	if err := Verify(m); err != nil {
+		t.Fatalf("赋值模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))
@@ -382,6 +401,20 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 			letStmt("t", num(0)),
 			selectStmt("t", boolLit(true), nil, num(1), nil, num(2), TypeNumber),
 		)), "nir.duplicate-name"},
+		{"set 目标不可变", module("main", mainWith(
+			letStmt("x", num(1)),
+			setStmt("x", num(2)),
+		)), "nir.immutable-local"},
+		{"set 目标不存在", module("main", mainWith(
+			setStmt("x", num(2)),
+		)), "nir.unknown-local"},
+		{"set 类型不符", module("main", mainWith(
+			mutableLetStmt("x", num(1)),
+			setStmt("x", boolLit(true)),
+		)), "nir.assign-type"},
+		{"set 缺少 value", module("main", mainWith(
+			Stmt{Op: OpSet, Name: "x"},
+		)), "nir.missing"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验，以及 04.01 的局部 let；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let，以及 04.02 的简单赋值；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -46,7 +46,21 @@ shasum -a 256 out/choices out/choices-replay
 ./bin/tynel dump nir tests/source/testdata/let.ts | grep mutable
 ```
 
-赋值还没有实现，`x = x + 1` 仍会被能力检查拒绝。规则见[声明身份与可变存储](reference/mutability.md)。
+04.01 只建立可变性标记，赋值在下一节。规则见[声明身份与可变存储](reference/mutability.md)。
+
+## 简单赋值
+
+04.02 的 `tests/source/testdata/assign.ts` 让数值和布尔变量各改一次：
+
+```zsh
+# 预期输出 4、true。
+./bin/tynel run tests/source/testdata/assign.ts
+
+# 赋值顺序：预期 2、2、3、5。
+./bin/tynel run tests/source/testdata/assign-order.ts
+```
+
+`x = x + 1` 先读旧值再写回；给 `const`、参数或不同类型赋值会被拒绝。规则见[从源码到 NIR](reference/lowering.md)，验收记录见[04.02 验收记录](validation/04-02-assignment.md)。
 
 ## 前置条件
 
@@ -114,7 +128,7 @@ cd tynel
 # 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
 
-# 只跑源码到原生的回归集合：69 个用例，其中 32 个程序会真的编译并运行。
+# 只跑源码到原生的回归集合：78 个用例，其中 34 个程序会真的编译并运行。
 ./.work/toolchain/go1.27.3-sdk-darwin-arm64/bin/go test -count=1 -v ./tests/source
 ```
 

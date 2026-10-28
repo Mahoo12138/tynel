@@ -124,6 +124,18 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 
 局部值必须有初始值，因为 NIR 的 `let` 需要 `value`；能力检查在更早一步就拒绝未初始化的 `let`。模块级 `let` 和 `var` 不会进入降低阶段：能力检查先按 `cap.module-let` 或 `cap.unsupported-syntax` 拒绝。作用域用声明 ID 做键，块内同名 `let` 遮蔽外层时，两个声明各自有独立的 NIR 名字。
 
+## 简单赋值
+
+`x = value;` 是一条独立语句，降成 NIR 的 `set`：
+
+```json
+{ "op": "set", "name": "x", "value": {"op": "binary", "operator": "+", ...} }
+```
+
+降低器先查目标声明：必须是 `let`、在当前作用域里、且 `mutable` 为真；右值按目标类型检查后先降成表达式，`set` 放在右值的准备语句之后。`x = x + 1` 里的 `local x` 因此读到写入前的值，写完后再读才是新值。
+
+赋值出现在表达式位置（`const y = (x = 1)`）由能力检查先拒绝；降低器也会报 `lower.assignment-value`，不把它悄悄降成“先写再取值”。复合赋值和自增自减不在降低器的运算符表里，能力检查会先给出更具体的错误码。
+
 ## 一元负号与布尔取反
 
 `-0` 在 JavaScript 里是负零，`0 - 0` 是正零，两者位模式不同。NIR 没有一元运算符，降低因此把 `-<字面量>` 直接折成位模式：`-0` 变成 `0x8000000000000000`，不经过运行时的取负。
@@ -182,7 +194,10 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 | `lower.bad-unary` | 一元负号作用在非字面量上 |
 | `lower.unknown-name` | 引用的声明不存在、参数不属于当前函数，或局部值不在当前作用域 |
 | `lower.duplicate-name` | 同一个块里重复定义局部值 |
-| `lower.bad-declaration` | 局部声明缺少声明身份、不是 `const`，或一次声明多个值 |
+| `lower.bad-declaration` | 局部声明缺少声明身份、不是 `const` / `let`，或一次声明多个值 |
+| `lower.assign-target` | 赋值目标不是直接名字 |
+| `lower.assign-immutable` | 赋值目标不是可变的 `let` |
+| `lower.assignment-value` | 赋值出现在表达式里 |
 | `lower.module-const-in-function` | 函数内引用模块级常量（需要全局变量，本阶段没有） |
 | `lower.function-value` | 把函数当值使用 |
 | `lower.unknown-callee` | 调用目标不是本文件里的函数 |

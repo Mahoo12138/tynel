@@ -61,6 +61,7 @@ const (
 	OpIf      = "if"
 	OpShort   = "short"
 	OpSelect  = "select"
+	OpSet     = "set"
 )
 
 // BinaryOperators 是首版允许的算术运算符，顺序用于报错提示。

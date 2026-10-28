@@ -292,6 +292,9 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) 
 			return nil, l.fail(stmt.Start, "lower.bad-arity", "表达式语句有 %d 个子节点", len(stmt.Children))
 		}
 		inner := &stmt.Children[0]
+		if inner.Kind == "BinaryExpression" && inner.Op == "=" {
+			return l.assignment(inner, sc)
+		}
 		arg, ok, err := l.consoleLog(inner)
 		if err != nil {
 			return nil, err
@@ -359,6 +362,43 @@ func (l *lowerer) branchStmts(node *frontend.Node, sc *scope) ([]nir.Stmt, error
 		return l.blockStmts(node, sc)
 	}
 	return l.statement(node, sc)
+}
+
+// assignment 降低 `x = value;`。目标必须是当前作用域里的可变 let；右值先
+// 求值，写入放在右值的准备语句之后，因此 `x = x + 1` 读到的是写入前的 x。
+func (l *lowerer) assignment(n *frontend.Node, sc *scope) ([]nir.Stmt, error) {
+	if len(n.Children) != 2 {
+		return nil, l.fail(n.Start, "lower.bad-arity", "赋值有 %d 个子节点", len(n.Children))
+	}
+	target, rhs := &n.Children[0], &n.Children[1]
+	if target.Kind != "Identifier" {
+		return nil, l.fail(target.Start, "lower.assign-target", "赋值目标必须是直接名字")
+	}
+	decl, ok := l.facts.Declaration(target.Target)
+	if !ok || target.Target == 0 {
+		return nil, l.fail(target.Start, "lower.unknown-name", "赋值目标 %q 不是本文件里的声明", target.Name)
+	}
+	if decl.Kind != frontend.DeclLet {
+		return nil, l.fail(target.Start, "lower.assign-immutable", "赋值目标 %q 不是可变的 let", target.Name)
+	}
+	if decl.Type == nil || (decl.Type.Kind != frontend.KindNumber && decl.Type.Kind != frontend.KindBoolean) {
+		return nil, l.fail(decl.Start, "lower.bad-type", "赋值目标 %q 的类型不是 number 或 boolean", decl.Name)
+	}
+	name, ok := sc.lookup(decl.ID)
+	if !ok {
+		return nil, l.fail(target.Start, "lower.unknown-name", "赋值目标 %q 不在当前作用域", target.Name)
+	}
+	if !sc.isMutable(decl.ID) {
+		return nil, l.fail(target.Start, "lower.assign-immutable", "赋值目标 %q 不是可变的 let", target.Name)
+	}
+	if err := l.typedOperand(rhs, decl.Type.Kind, "赋值右侧"); err != nil {
+		return nil, err
+	}
+	value, pre, err := l.expr(rhs, sc, 1)
+	if err != nil {
+		return nil, err
+	}
+	return append(pre, nir.Stmt{Op: nir.OpSet, Name: name, Value: value, Pos: l.pos(n.Start)}), nil
 }
 
 // localDeclaration 降低分支里的局部 const。骨架是
@@ -448,6 +488,9 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir
 		v := n.Kind == "TrueKeyword"
 		return &nir.Expr{Op: nir.OpBool, Value: &v, Pos: l.pos(n.Start)}, nil, nil
 	case "BinaryExpression":
+		if n.Op == "=" {
+			return nil, nil, l.fail(n.Start, "lower.assignment-value", "赋值只能作为独立语句，不能出现在表达式里")
+		}
 		if n.Op == "&&" || n.Op == "||" {
 			return l.shortCircuit(n, sc, depth)
 		}

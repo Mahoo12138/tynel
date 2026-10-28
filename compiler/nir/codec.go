@@ -347,10 +347,26 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if err := checkStmts(s.Else, spath+".else", depth+1, nodes, limits, seen, true); err != nil {
 				return err
 			}
+		case OpSet:
+			if s.Name == "" {
+				return badf("nir.missing", "%s 的 set 缺少 name", spath)
+			}
+			if s.Value == nil {
+				return badf("nir.missing", "%s 的 set 缺少 value", spath)
+			}
+			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 || s.ThenValue != nil || s.ElseValue != nil {
+				return badf("nir.unexpected-field", "%s（op=set）不接受 cond、then、else、thenValue 或 elseValue", spath)
+			}
+			if s.Operator != "" || s.Left != nil || len(s.Right) > 0 || s.Type != "" {
+				return badf("nir.unexpected-field", "%s（op=set）不接受 operator、left、right 或 type", spath)
+			}
+			if err := checkExpr(s.Value, spath+".value", 1, nodes, limits); err != nil {
+				return err
+			}
 		case "":
 			return badf("nir.missing", "%s 缺少 op", spath)
 		default:
-			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if、short 或 select", spath, s.Op)
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if、short、select 或 set", spath, s.Op)
 		}
 	}
 	return nil

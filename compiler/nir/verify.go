@@ -64,7 +64,7 @@ type checker struct {
 // function 检查一个函数体。返回值类型与参数表在这一层确定，表达式只做类型
 // 推导，不生成任何东西。
 func (c *checker) function(f *Function) error {
-	root := &scope{params: make(map[string]string, len(f.Params)), names: make(map[string]string)}
+	root := &scope{params: make(map[string]string, len(f.Params)), names: make(map[string]string), mutable: make(map[string]bool)}
 	for i := range f.Params {
 		p := &f.Params[i]
 		if _, exists := root.params[p.Name]; exists {
@@ -141,6 +141,22 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 				return failAt("nir.duplicate-name", s.Pos, "函数 %q 里 %q 与参数重复", f.Name, s.Name)
 			}
 			sc.names[s.Name] = got
+			sc.mutable[s.Name] = s.Mutable
+		case OpSet:
+			got, err := c.exprType(s.Value, sc)
+			if err != nil {
+				return err
+			}
+			want, ok := sc.lookupLocal(s.Name)
+			if !ok {
+				return failAt("nir.unknown-local", s.Pos, "set 的目标 %q 不是已定义的局部值", s.Name)
+			}
+			if !sc.lookupMutable(s.Name) {
+				return failAt("nir.immutable-local", s.Pos, "set 的目标 %q 不是可变的 let", s.Name)
+			}
+			if got != want {
+				return failAt("nir.assign-type", s.Pos, "set 的目标 %q 是 %s，右值是 %s", s.Name, want, got)
+			}
 		case OpIf:
 			got, err := c.exprType(s.Cond, sc)
 			if err != nil {
@@ -233,13 +249,14 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 // scope 是语句块内的可见名字。params 只在函数根作用域非空；names 是当前块
 // 的局部值。子块可以遮蔽父块，但同名声明不能出现在同一个块里。
 type scope struct {
-	parent *scope
-	params map[string]string
-	names  map[string]string
+	parent  *scope
+	params  map[string]string
+	names   map[string]string
+	mutable map[string]bool
 }
 
 func (s *scope) child() *scope {
-	return &scope{parent: s, names: make(map[string]string)}
+	return &scope{parent: s, names: make(map[string]string), mutable: make(map[string]bool)}
 }
 
 func (s *scope) lookupLocal(name string) (string, bool) {
@@ -261,6 +278,15 @@ func (s *scope) lookupParam(name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (s *scope) lookupMutable(name string) bool {
+	for cur := s; cur != nil; cur = cur.parent {
+		if _, ok := cur.names[name]; ok {
+			return cur.mutable[name]
+		}
+	}
+	return false
 }
 
 // exprType 推导表达式类型。返回 TypeNumber、TypeBool 或 TypeVoid（void 调用）。

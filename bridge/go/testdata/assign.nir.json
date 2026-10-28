@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "let", "name": "x", "mutable": true, "value": {"op": "number", "bits": "0x3ff0000000000000"}},
+        {"op": "set", "name": "x", "value": {"op": "binary", "operator": "+",
+          "left": {"op": "local", "name": "x"},
+          "right": {"op": "number", "bits": "0x3ff0000000000000"}}},
+        {"op": "print", "value": {"op": "local", "name": "x"}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

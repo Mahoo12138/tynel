@@ -507,6 +507,8 @@ func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
 		}
 	case ast.IsPrefixUnaryExpression(node):
 		out.Op = operatorText(node.AsPrefixUnaryExpression().Operator)
+	case ast.IsPostfixUnaryExpression(node):
+		out.Op = operatorText(node.AsPostfixUnaryExpression().Operator)
 	case ast.IsPropertyAccessExpression(node):
 		// 只收对象那一侧。属性名本身也是 Identifier，通用递归会把它一起收进来，
 		// 让 console.log 看起来有两个子节点。
@@ -618,6 +620,42 @@ func operatorText(k ast.Kind) string {
 		return "|"
 	case ast.KindCaretToken:
 		return "^"
+	case ast.KindEqualsToken:
+		return "="
+	case ast.KindPlusEqualsToken:
+		return "+="
+	case ast.KindMinusEqualsToken:
+		return "-="
+	case ast.KindAsteriskEqualsToken:
+		return "*="
+	case ast.KindSlashEqualsToken:
+		return "/="
+	case ast.KindPercentEqualsToken:
+		return "%="
+	case ast.KindAsteriskAsteriskEqualsToken:
+		return "**="
+	case ast.KindAmpersandEqualsToken:
+		return "&="
+	case ast.KindBarEqualsToken:
+		return "|="
+	case ast.KindCaretEqualsToken:
+		return "^="
+	case ast.KindLessThanLessThanEqualsToken:
+		return "<<="
+	case ast.KindGreaterThanGreaterThanEqualsToken:
+		return ">>="
+	case ast.KindGreaterThanGreaterThanGreaterThanEqualsToken:
+		return ">>>="
+	case ast.KindAmpersandAmpersandEqualsToken:
+		return "&&="
+	case ast.KindBarBarEqualsToken:
+		return "||="
+	case ast.KindQuestionQuestionEqualsToken:
+		return "??="
+	case ast.KindPlusPlusToken:
+		return "++"
+	case ast.KindMinusMinusToken:
+		return "--"
 	}
 	return kindName(k)
 }

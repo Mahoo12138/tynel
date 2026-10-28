@@ -120,7 +120,12 @@ func (c *checker) node(n *frontend.Node) {
 			c.report(n.Start, "cap.unsupported-syntax", "表达式语句有 %d 个子节点", len(n.Children))
 			return
 		}
-		c.node(&n.Children[0])
+		inner := &n.Children[0]
+		if inner.Kind == "BinaryExpression" && inner.Op == "=" {
+			c.assignment(inner)
+			return
+		}
+		c.node(inner)
 	case "IfStatement":
 		if !c.inFunction {
 			c.report(n.Start, "cap.unsupported-syntax", "模块级 if 不在本阶段子集内")
@@ -175,6 +180,8 @@ func (c *checker) node(n *frontend.Node) {
 			return
 		}
 		c.typedOperand(&n.Children[0], decl.Type.Kind, "局部值 "+decl.Name)
+	case "PostfixUnaryExpression":
+		c.report(n.Start, "cap.inc-dec", "自增自减 %q 不在本阶段子集内", n.Op)
 	case "ConditionalExpression":
 		if len(n.Children) != 3 {
 			c.report(n.Start, "cap.bad-arity", "三元式有 %d 个子节点", len(n.Children))
@@ -198,6 +205,14 @@ func (c *checker) node(n *frontend.Node) {
 			c.node(&n.Children[i])
 		}
 	case "BinaryExpression":
+		if n.Op == "=" {
+			c.report(n.Start, "cap.assignment-value", "赋值只能作为独立语句，不能出现在表达式里")
+			return
+		}
+		if isCompoundAssignment(n.Op) {
+			c.report(n.Start, "cap.compound-assignment", "复合赋值 %q 不在本阶段子集内", n.Op)
+			return
+		}
 		if len(n.Children) != 2 {
 			c.report(n.Start, "cap.unsupported-syntax", "二元运算有 %d 个操作数", len(n.Children))
 			return
@@ -233,6 +248,10 @@ func (c *checker) node(n *frontend.Node) {
 			c.report(n.Start, "cap.bad-operator", "运算符 %q 不在本阶段支持的 + - * / 与比较之内", n.Op)
 		}
 	case "PrefixUnaryExpression":
+		if n.Op == "++" || n.Op == "--" {
+			c.report(n.Start, "cap.inc-dec", "自增自减 %q 不在本阶段子集内", n.Op)
+			return
+		}
 		if n.Op == "!" {
 			if len(n.Children) != 1 {
 				c.report(n.Start, "cap.unsupported-syntax", "一元运算有 %d 个操作数", len(n.Children))
@@ -325,6 +344,39 @@ func (c *checker) children(n *frontend.Node) {
 	for i := range n.Children {
 		c.node(&n.Children[i])
 	}
+}
+
+// assignment 检查一条独立的 `x = value;`。赋值只支持这种语句形式；目标必须
+// 是已初始化的 let，右值与目标同类型。
+func (c *checker) assignment(n *frontend.Node) {
+	if len(n.Children) != 2 {
+		c.report(n.Start, "cap.bad-arity", "赋值有 %d 个子节点", len(n.Children))
+		return
+	}
+	target, rhs := &n.Children[0], &n.Children[1]
+	if target.Kind != "Identifier" {
+		c.report(target.Start, "cap.assign-target", "赋值目标必须是直接名字")
+		return
+	}
+	decl, ok := c.facts.Declaration(target.Target)
+	if !ok || target.Target == 0 {
+		c.report(target.Start, "cap.unknown-name", "赋值目标 %q 不是本文件里的声明", target.Name)
+		return
+	}
+	if decl.Kind != frontend.DeclLet {
+		c.report(target.Start, "cap.assign-immutable", "赋值目标 %q 是%s，不是可变的 let", target.Name, decl.Kind)
+		return
+	}
+	if decl.Type == nil {
+		c.report(target.Start, "cap.bad-type", "赋值目标 %q 缺少类型摘要", target.Name)
+		return
+	}
+	if rhs.Type == nil || rhs.Type.Kind != decl.Type.Kind {
+		c.report(rhs.Start, "cap.bad-type", "赋值目标 %q 是 %s，右值不是同一类型", target.Name, decl.Type.Kind)
+		return
+	}
+	c.valueNode(rhs, "赋值右侧")
+	c.node(rhs)
 }
 
 func (c *checker) identifier(n *frontend.Node) {
@@ -427,6 +479,14 @@ func (c *checker) report(offset int, code, format string, args ...any) {
 func isArithmetic(op string) bool {
 	switch op {
 	case "+", "-", "*", "/":
+		return true
+	}
+	return false
+}
+
+func isCompoundAssignment(op string) bool {
+	switch op {
+	case "+=", "-=", "*=", "/=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", ">>>=", "&&=", "||=", "??=":
 		return true
 	}
 	return false

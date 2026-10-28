@@ -49,7 +49,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `let` | `name`、`value` 必填 | 定义一个局部值，供同一块内的后续语句按名字读取 |
 | `discard` | `value` 必填 | 求值一个表达式并丢弃结果 |
 | `if` | `cond` 必填，`then` / `else` 可选 | 条件为 `bool`；两个分支各自是一个语句块 |
-| `short` | `name`、`operator`、`left`、`value` 必填，`right` 可选 | `&&` / `||` 的短路求值，结果绑定到 `name`；`right` 是只在需要时执行的准备块 |
+| `short` | `name`、`operator`、`left`、`value` 必填，`right` 可选 | `&&` / `\|\|` 的短路求值，结果绑定到 `name`；`right` 是只在需要时执行的准备块 |
 
 `let` 不是语言层面的变量，它解决的是求值次数：前端把模块级 `const`、分支里的 `const` 和需要复用的中间结果落成局部值，避免在表达式里重复求值——`const x = f(); g(x, x)` 只应该调用一次 `f`。
 

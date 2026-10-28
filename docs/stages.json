@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "03.06",
+  "currentImplementationNode": "03.07",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -385,7 +385,6 @@
             "docs/validation/03-06-ternary.md"
           ]
         },
-        },
         {
           "id": "03.07",
           "title": "验证条件表达式的组合行为",
@@ -393,9 +392,13 @@
             "03.06"
           ],
           "planSection": "PLAN.md#task-03-07",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/validation/03-07-combine.md",
+            "compiler/lower/lower.go",
+            "cmd/tynel/buildir_test.go"
+          ]
         },
         {
           "id": "03.08",

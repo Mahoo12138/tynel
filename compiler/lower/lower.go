@@ -454,15 +454,10 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir
 				return nil, nil, err
 			}
 		}
-		left, leftPre, err := l.expr(&n.Children[0], sc, depth+1)
+		left, right, pre, err := l.pairOperands(&n.Children[0], &n.Children[1], sc, depth)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightPre, err := l.expr(&n.Children[1], sc, depth+1)
-		if err != nil {
-			return nil, nil, err
-		}
-		pre := append(leftPre, rightPre...)
 		return &nir.Expr{Op: nir.OpBinary, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, pre, nil
 	case "PrefixUnaryExpression":
 		return l.unary(n, sc, depth)
@@ -529,15 +524,10 @@ func (l *lowerer) compare(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []
 			return nil, nil, l.fail(n.Start, "lower.bad-type", "严格相等只支持 number 或 boolean，实际为 %s", leftNode.Type.Kind)
 		}
 	}
-	left, leftPre, err := l.expr(leftNode, sc, depth+1)
+	left, right, pre, err := l.pairOperands(leftNode, rightNode, sc, depth)
 	if err != nil {
 		return nil, nil, err
 	}
-	right, rightPre, err := l.expr(rightNode, sc, depth+1)
-	if err != nil {
-		return nil, nil, err
-	}
-	pre := append(leftPre, rightPre...)
 	return &nir.Expr{Op: nir.OpCompare, Operator: n.Op, Left: left, Right: right, Pos: l.pos(n.Start)}, pre, nil
 }
 
@@ -669,6 +659,29 @@ func (l *lowerer) shortCircuit(n *frontend.Node, sc *scope, depth int) (*nir.Exp
 func (l *lowerer) tempName() string {
 	l.temp++
 	return fmt.Sprintf("_tmp_%d", l.temp)
+}
+
+// pairOperands 降低二元运算的两个操作数。右侧带准备语句时，左侧如果只是
+// 一个尚未物化的表达式，必须先算出来再执行右侧准备，否则右侧的副作用会
+// 跑到左侧前面。
+func (l *lowerer) pairOperands(leftNode, rightNode *frontend.Node, sc *scope, depth int) (*nir.Expr, *nir.Expr, []nir.Stmt, error) {
+	left, leftPre, err := l.expr(leftNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	right, rightPre, err := l.expr(rightNode, sc, depth+1)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	pre := leftPre
+	if len(rightPre) > 0 && len(leftPre) == 0 {
+		name := l.tempName()
+		value := *left
+		pre = append(pre, nir.Stmt{Op: nir.OpLet, Name: name, Value: &value, Pos: l.pos(leftNode.Start)})
+		left = &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(leftNode.Start)}
+	}
+	pre = append(pre, rightPre...)
+	return left, right, pre, nil
 }
 
 // conditional 降低 cond ? then : else。条件在外层求值一次；两条分支各自带

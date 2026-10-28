@@ -83,7 +83,7 @@ cd tynel
 # 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
 
-# 只跑源码到原生的回归集合：59 个用例，其中 28 个程序会真的编译并运行。
+# 只跑源码到原生的回归集合：62 个用例，其中 31 个程序会真的编译并运行。
 ./.work/toolchain/go1.27.3-sdk-darwin-arm64/bin/go test -count=1 -v ./tests/source
 ```
 

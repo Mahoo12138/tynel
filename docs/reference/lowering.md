@@ -142,6 +142,12 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 
 循环体可以包含赋值、`if` 和嵌套 `while`。返回路径分析不把 `while` 当成“一定执行”：只有循环体里的 `return` 不算完整返回，函数末尾仍要有 `return`。`break` / `continue` 留给 04.04。
 
+## break 与 continue
+
+降低器维护一个循环栈。进入 `while` 时分配一个正整数 id 并压栈，退出时弹出；`break` / `continue` 取栈顶作为 `target`，所以它们只作用于最近循环。`continue` 不是跳到循环体末尾，而是回到条件检查；bridge 生成的 Go `continue` 也回到 `for` 的开头，条件准备因此重新执行。
+
+带标签的 `break outer;` 会绕过“最近循环”的规则，能力检查按 `cap.labeled-jump` 拒绝，降低器也不会处理。循环外的跳转由 TypeScript 先报 `TS1107`；手写 NIR 里的错误目标由验证器报 `nir.loop-target`。
+
 ## 一元负号与布尔取反
 
 `-0` 在 JavaScript 里是负零，`0 - 0` 是正零，两者位模式不同。NIR 没有一元运算符，降低因此把 `-<字面量>` 直接折成位模式：`-0` 变成 `0x8000000000000000`，不经过运行时的取负。
@@ -204,6 +210,8 @@ bridge 对这两种被丢弃的表达式处理不同：`void` 调用本身就是
 | `lower.assign-target` | 赋值目标不是直接名字 |
 | `lower.assign-immutable` | 赋值目标不是可变的 `let` |
 | `lower.assignment-value` | 赋值出现在表达式里 |
+| `lower.labeled-jump` | 带标签的 `break` / `continue` |
+| `lower.loop-target` | `break` / `continue` 不在循环里 |
 | `lower.module-const-in-function` | 函数内引用模块级常量（需要全局变量，本阶段没有） |
 | `lower.function-value` | 把函数当值使用 |
 | `lower.unknown-callee` | 调用目标不是本文件里的函数 |

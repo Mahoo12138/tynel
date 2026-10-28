@@ -43,6 +43,9 @@
     "sum": {"comparison": "shared"},
     "while-cond": {"comparison": "shared"},
     "while-nested": {"comparison": "shared"},
+    "break": {"comparison": "shared"},
+    "continue": {"comparison": "shared"},
+    "jump-return": {"comparison": "shared"},
     "specials": {
       "comparison": "spelling",
       "note": "无穷在 Tynel 写作 +Inf / -Inf，Node 写作 Infinity / -Infinity；归一拼写后应完全一致"

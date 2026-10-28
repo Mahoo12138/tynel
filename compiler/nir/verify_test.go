@@ -36,10 +36,12 @@ func mutableLetStmt(name string, e Expr) Stmt {
 func setStmt(name string, e Expr) Stmt {
 	return Stmt{Op: OpSet, Name: name, Value: &e}
 }
-func whileStmt(cond Expr, condPre, body []Stmt) Stmt {
-	return Stmt{Op: OpWhile, Cond: &cond, CondPre: condPre, Body: body}
+func whileStmt(id int, cond Expr, condPre, body []Stmt) Stmt {
+	return Stmt{Op: OpWhile, ID: id, Cond: &cond, CondPre: condPre, Body: body}
 }
-func local(name string) Expr { return Expr{Op: OpLocal, Name: name} }
+func breakStmt(target int) Stmt    { return Stmt{Op: OpBreak, Target: target} }
+func continueStmt(target int) Stmt { return Stmt{Op: OpContinue, Target: target} }
+func local(name string) Expr       { return Expr{Op: OpLocal, Name: name} }
 func ifStmt(cond Expr, then, els []Stmt) Stmt {
 	return Stmt{Op: OpIf, Cond: &cond, Then: then, Else: els}
 }
@@ -322,7 +324,7 @@ func TestVerifyWhile(t *testing.T) {
 	m := module("main", mainWith(
 		mutableLetStmt("i", num(0)),
 		mutableLetStmt("total", num(0)),
-		whileStmt(compare("<", local("i"), num(3)), nil, []Stmt{
+		whileStmt(1, compare("<", local("i"), num(3)), nil, []Stmt{
 			setStmt("total", binary("+", local("total"), local("i"))),
 			setStmt("i", binary("+", local("i"), num(1))),
 		}),
@@ -331,6 +333,25 @@ func TestVerifyWhile(t *testing.T) {
 	))
 	if err := Verify(m); err != nil {
 		t.Fatalf("while 模块应通过验证：%v", err)
+	}
+}
+
+// TestVerifyJumps 覆盖循环目标身份：内层 break / continue 指向最近循环。
+func TestVerifyJumps(t *testing.T) {
+	m := module("main", mainWith(
+		mutableLetStmt("i", num(0)),
+		mutableLetStmt("j", num(0)),
+		whileStmt(1, compare("<", local("i"), num(2)), nil, []Stmt{
+			whileStmt(2, compare("<", local("j"), num(2)), nil, []Stmt{
+				breakStmt(2),
+				continueStmt(2),
+			}),
+			setStmt("i", binary("+", local("i"), num(1))),
+		}),
+		retVoid(),
+	))
+	if err := Verify(m); err != nil {
+		t.Fatalf("嵌套跳转模块应通过验证：%v", err)
 	}
 }
 
@@ -436,22 +457,37 @@ func TestVerifyRejectsSemanticErrors(t *testing.T) {
 			Stmt{Op: OpSet, Name: "x"},
 		)), "nir.missing"},
 		{"while 条件不是 bool", module("main", mainWith(
-			whileStmt(num(1), nil, nil),
+			whileStmt(1, num(1), nil, nil),
 		)), "nir.condition-type"},
 		{"while 缺少 cond", module("main", mainWith(
 			Stmt{Op: OpWhile, Body: []Stmt{retVoid()}},
 		)), "nir.missing"},
 		{"while 体局部值泄漏", module("main", mainWith(
-			whileStmt(boolLit(false), nil, []Stmt{letStmt("x", num(1))}),
+			whileStmt(1, boolLit(false), nil, []Stmt{letStmt("x", num(1))}),
 			printStmt(local("x")),
 		)), "nir.unknown-local"},
 		{"while 条件准备不接受 set", module("main", mainWith(
 			mutableLetStmt("x", num(1)),
-			whileStmt(boolLit(false), []Stmt{setStmt("x", num(2))}, nil),
+			whileStmt(1, boolLit(false), []Stmt{setStmt("x", num(2))}, nil),
 		)), "nir.bad-op"},
 		{"while 体 return 不算完整返回", module("main", mainWith(retVoid()),
-			fn("f", TypeNumber, nil, whileStmt(boolLit(false), nil, []Stmt{ret(num(1))})),
+			fn("f", TypeNumber, nil, whileStmt(1, boolLit(false), nil, []Stmt{ret(num(1))})),
 		), "nir.missing-return"},
+		{"break 在循环外", module("main", mainWith(breakStmt(1))), "nir.loop-target"},
+		{"break 目标不是当前循环", module("main", mainWith(
+			whileStmt(1, boolLit(false), nil, []Stmt{
+				whileStmt(2, boolLit(false), nil, []Stmt{breakStmt(1)}),
+			}),
+		)), "nir.loop-target"},
+		{"循环 id 重复", module("main", mainWith(
+			whileStmt(1, boolLit(false), nil, []Stmt{
+				whileStmt(1, boolLit(false), nil, nil),
+			}),
+		)), "nir.duplicate-loop"},
+		{"break 缺少 target", module("main", mainWith(Stmt{Op: OpBreak})), "nir.missing"},
+		{"while 缺少 id", module("main", mainWith(
+			Stmt{Op: OpWhile, Cond: &ifWithValueCond},
+		)), "nir.missing"},
 		{"bool 参数收到 number", module("main", mainWith(printStmt(call("invert", num(1)))), invertFn), "nir.arg-type"},
 		{"bool 函数返回 number", module("main", ok, fn("f", TypeBool, nil, ret(num(1)))), "nir.result-type"},
 		{"内存里构造的未知 op", module("main", mainWith(printStmt(Expr{Op: "magic"}))), "nir.bad-op"},

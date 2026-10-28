@@ -31,6 +31,7 @@ func Check(snapshot *source.Snapshot, facts *frontend.Facts) ([]*diagnostic.Diag
 		c.declaration(decl)
 		if decl.Body != nil {
 			c.inFunction = decl.Kind == frontend.DeclFunction
+			c.loopDepth = 0
 			c.node(decl.Body)
 			c.inFunction = false
 		}
@@ -40,6 +41,7 @@ func Check(snapshot *source.Snapshot, facts *frontend.Facts) ([]*diagnostic.Diag
 	}
 	if facts.Module != nil {
 		c.inFunction = false
+		c.loopDepth = 0
 		c.node(facts.Module)
 	}
 	return c.findings, c.err
@@ -51,6 +53,7 @@ type checker struct {
 	findings   []*diagnostic.Diagnostic
 	err        error
 	inFunction bool
+	loopDepth  int
 }
 
 func (c *checker) declaration(d *frontend.Declaration) {
@@ -149,7 +152,19 @@ func (c *checker) node(n *frontend.Node) {
 			return
 		}
 		c.boolOperand(&n.Children[0], "while 的条件")
+		c.loopDepth++
 		c.node(&n.Children[1])
+		c.loopDepth--
+	case "LabeledStatement":
+		c.report(n.Start, "cap.labeled-jump", "带标签的语句不在本阶段子集内")
+	case "BreakStatement", "ContinueStatement":
+		if len(n.Children) > 0 {
+			c.report(n.Start, "cap.labeled-jump", "带标签的 %s 不在本阶段子集内", n.Kind)
+			return
+		}
+		if c.loopDepth == 0 {
+			c.report(n.Start, "cap.loop-target", "%s 不在循环里", n.Kind)
+		}
 	case "VariableStatement":
 		if n.Decl != 0 {
 			if decl, ok := c.facts.Declaration(n.Decl); ok {

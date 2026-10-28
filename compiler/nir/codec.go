@@ -225,6 +225,12 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 		if s.Op != OpWhile && (len(s.CondPre) > 0 || len(s.Body) > 0) {
 			return badf("nir.unexpected-field", "%s（op=%s）不接受字段 condPre 或 body", spath, s.Op)
 		}
+		if s.Op != OpWhile && s.ID != 0 {
+			return badf("nir.unexpected-field", "%s（op=%s）不接受字段 id", spath, s.Op)
+		}
+		if s.Op != OpBreak && s.Op != OpContinue && s.Target != 0 {
+			return badf("nir.unexpected-field", "%s（op=%s）不接受字段 target", spath, s.Op)
+		}
 		switch s.Op {
 		case OpReturn, OpPrint, OpLet, OpDiscard:
 			if s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 || s.ThenValue != nil || s.ElseValue != nil || s.Type != "" {
@@ -370,10 +376,13 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if s.Cond == nil {
 				return badf("nir.missing", "%s 的 while 缺少 cond", spath)
 			}
+			if s.ID <= 0 {
+				return badf("nir.missing", "%s 的 while 缺少正整数 id", spath)
+			}
 			if s.Name != "" || s.Value != nil || len(s.Then) > 0 || len(s.Else) > 0 ||
 				s.ThenValue != nil || s.ElseValue != nil || s.Type != "" || s.Mutable ||
-				s.Operator != "" || s.Left != nil || len(s.Right) > 0 {
-				return badf("nir.unexpected-field", "%s（op=while）只接受 condPre、cond 与 body", spath)
+				s.Operator != "" || s.Left != nil || len(s.Right) > 0 || s.Target != 0 {
+				return badf("nir.unexpected-field", "%s（op=while）只接受 condPre、cond、body 与 id", spath)
 			}
 			if err := checkExpr(s.Cond, spath+".cond", 1, nodes, limits); err != nil {
 				return err
@@ -384,10 +393,19 @@ func checkStmts(stmts []Stmt, rootPath string, depth int, nodes *int, limits Lim
 			if err := checkStmts(s.Body, spath+".body", depth+1, nodes, limits, seen, false); err != nil {
 				return err
 			}
+		case OpBreak, OpContinue:
+			if s.Target <= 0 {
+				return badf("nir.missing", "%s 的 %s 缺少正整数 target", spath, s.Op)
+			}
+			if s.Name != "" || s.Value != nil || s.Cond != nil || len(s.Then) > 0 || len(s.Else) > 0 ||
+				s.Operator != "" || s.Left != nil || len(s.Right) > 0 || s.ThenValue != nil || s.ElseValue != nil ||
+				s.Type != "" || s.Mutable || len(s.CondPre) > 0 || len(s.Body) > 0 || s.ID != 0 {
+				return badf("nir.unexpected-field", "%s（op=%s）只接受 target", spath, s.Op)
+			}
 		case "":
 			return badf("nir.missing", "%s 缺少 op", spath)
 		default:
-			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if、short、select、set 或 while", spath, s.Op)
+			return badf("nir.bad-op", "%s.op 为 %q，只接受 return、print、let、discard、if、short、select、set、while、break 或 continue", spath, s.Op)
 		}
 	}
 	return nil

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "let", "name": "i", "mutable": true, "value": {"op": "number", "bits": "0x0000000000000000"}},
+        {"op": "while", "id": 1,
+          "cond": {"op": "compare", "operator": "<",
+            "left": {"op": "local", "name": "i"},
+            "right": {"op": "number", "bits": "0x4024000000000000"}},
+          "body": [
+            {"op": "set", "name": "i", "value": {"op": "binary", "operator": "+",
+              "left": {"op": "local", "name": "i"},
+              "right": {"op": "number", "bits": "0x3ff0000000000000"}}},
+            {"op": "if",
+              "cond": {"op": "compare", "operator": "===",
+                "left": {"op": "local", "name": "i"},
+                "right": {"op": "number", "bits": "0x4008000000000000"}},
+              "then": [{"op": "break", "target": 1}]}
+          ]},
+        {"op": "print", "value": {"op": "local", "name": "i"}},
+        {"op": "set", "name": "i", "value": {"op": "number", "bits": "0x0000000000000000"}},
+        {"op": "while", "id": 2,
+          "cond": {"op": "compare", "operator": "<",
+            "left": {"op": "local", "name": "i"},
+            "right": {"op": "number", "bits": "0x4008000000000000"}},
+          "body": [
+            {"op": "set", "name": "i", "value": {"op": "binary", "operator": "+",
+              "left": {"op": "local", "name": "i"},
+              "right": {"op": "number", "bits": "0x3ff0000000000000"}}},
+            {"op": "if",
+              "cond": {"op": "compare", "operator": "===",
+                "left": {"op": "local", "name": "i"},
+                "right": {"op": "number", "bits": "0x4000000000000000"}},
+              "then": [{"op": "continue", "target": 2}]},
+            {"op": "print", "value": {"op": "local", "name": "i"}}
+          ]},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

@@ -48,7 +48,9 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `print` | `value` 必填 | 输出一个表达式的结果 |
 | `let` | `name`、`value` 必填，`mutable` 可选 | 定义一个局部值，供同一块内的后续语句按名字读取；`mutable` 标记它来自 `let` 还是 `const` |
 | `set` | `name`、`value` 必填 | 把右值写入一个可变的 `let`；目标必须是前面定义过的 `mutable` 局部值 |
-| `while` | `cond` 必填，`condPre` / `body` 可选 | 条件每轮重新检查；`condPre` 是条件准备，`body` 是循环体 |
+| `while` | `cond`、`id` 必填，`condPre` / `body` 可选 | 条件每轮重新检查；`id` 是循环身份，`condPre` 是条件准备，`body` 是循环体 |
+| `break` | `target` 必填 | 退出 `target` 指定的最近循环 |
+| `continue` | `target` 必填 | 回到 `target` 指定的最近循环的条件检查 |
 | `discard` | `value` 必填 | 求值一个表达式并丢弃结果 |
 | `if` | `cond` 必填，`then` / `else` 可选 | 条件为 `bool`；两个分支各自是一个语句块 |
 | `short` | `name`、`operator`、`left`、`value` 必填，`right` 可选 | `&&` / `\|\|` 的短路求值，结果绑定到 `name`；`right` 是只在需要时执行的准备块 |
@@ -74,7 +76,7 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 `while` 的条件与准备分开：
 
 ```json
-{ "op": "while",
+{ "op": "while", "id": 1,
   "condPre": [],
   "cond": {"op": "compare", "operator": "<=",
             "left": {"op": "local", "name": "i"},
@@ -86,6 +88,15 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 ```
 
 `condPre` 只接受 `let`、`short` 与 `select`，它和 `cond` 在每一轮开始时执行；`body` 在条件为真时执行，然后回到条件。循环可能零次执行。`condPre` 里的局部值只对 `cond` 可见，`body` 里的局部值不泄漏到循环外。
+
+`break` 与 `continue` 用 `target` 指向循环身份：
+
+```json
+{ "op": "while", "id": 2, "cond": {...},
+  "body": [{"op": "break", "target": 2}] }
+```
+
+目标必须等于当前最内层循环的 `id`，否则报 `nir.loop-target`；同一函数里的循环 `id` 不能重复，否则报 `nir.duplicate-loop`。完整规则见[循环跳转](jumps.md)。
 
 `if` 的 `then` 与 `else` 各自开一个子作用域，两条分支里同名的 `let` 互不影响。`cond` 只求值一次，结果必须是 `bool`；`else` 里再放一条 `if` 就是 `else if`。`if` 本身不产生值，不能出现在表达式位置。
 
@@ -183,7 +194,8 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | 短路 | `short` 的 `left` 与 `value` 必须是 `bool`；`name` 在当前块里唯一，类型为 `bool`；`right` 只在需要时执行 |
 | 三元式 | `select` 的 `cond` 必须是 `bool`；两条分支必须同类型，且与 `type` 一致；`name` 在当前块里唯一 |
 | 赋值 | `set` 的目标必须由前面的 `mutable` `let` 定义；右值与目标同类型 |
-| 循环 | `while` 的 `cond` 必须是 `bool`；`condPre` 只含表达式准备；`body` 在独立子作用域里检查 |
+| 循环 | `while` 的 `cond` 必须是 `bool`；`condPre` 只含表达式准备；`body` 在独立子作用域里检查；`id` 在函数内唯一 |
+| 跳转 | `break` / `continue` 的 `target` 必须等于当前最内层循环的 `id` |
 | 返回值 | 返回 `number` 或 `bool` 的函数必须在每条路径上以带值的 `return` 结束，值类型与声明一致；`void` 函数的 `return` 不带值。`if` 只有两臂都存在且都结束时才算覆盖路径 |
 | 输出 | `print` 只接受 `number` 或 `bool`，`void` 调用不能作为值使用 |
 | 丢弃 | `discard` 的表达式必须成立，结果类型不限 |
@@ -226,6 +238,8 @@ JSON 没有联合类型，所有字段只能平铺在同一层。因此文件里
 | `nir.unknown-local` | 语义 | 引用了尚未定义的局部值，或局部值不在当前块及祖先块里；也包括 `set` 的目标 |
 | `nir.immutable-local` | 语义 | `set` 的目标不是可变的 `let` |
 | `nir.assign-type` | 语义 | `set` 的右值与目标类型不同 |
+| `nir.loop-target` | 语义 | `break` / `continue` 不在循环里，或目标不是当前最内层循环 |
+| `nir.duplicate-loop` | 语义 | 同一函数里的循环 `id` 重复 |
 | `nir.operand-type` | 语义 | 运算符的操作数类型不符，例如 `not` 收到 `number`、有序比较收到 `bool`、`short` 的操作数不是 `bool` |
 | `nir.missing-return` | 语义 | 返回 `number` 或 `bool` 的函数有路径没有 `return`；循环体里的 `return` 不算覆盖所有路径 |
 | `nir.io` | 环境 | 打开、写入或改名失败 |

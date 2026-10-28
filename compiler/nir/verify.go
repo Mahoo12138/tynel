@@ -59,11 +59,13 @@ func VerifyWithLimits(module *Module, limits Limits) error {
 // checker 保存一次验证的函数表，供调用解析使用。
 type checker struct {
 	funcs map[string]*Function
+	loops []int
 }
 
 // function 检查一个函数体。返回值类型与参数表在这一层确定，表达式只做类型
 // 推导，不生成任何东西。
 func (c *checker) function(f *Function) error {
+	c.loops = c.loops[:0]
 	root := &scope{params: make(map[string]string, len(f.Params)), names: make(map[string]string), mutable: make(map[string]bool)}
 	for i := range f.Params {
 		p := &f.Params[i]
@@ -158,6 +160,11 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 				return failAt("nir.assign-type", s.Pos, "set 的目标 %q 是 %s，右值是 %s", s.Name, want, got)
 			}
 		case OpWhile:
+			for _, id := range c.loops {
+				if id == s.ID {
+					return failAt("nir.duplicate-loop", s.Pos, "循环 id %d 在同一函数里重复", s.ID)
+				}
+			}
 			condScope := sc.child()
 			if err := c.stmts(s.CondPre, condScope, f); err != nil {
 				return err
@@ -169,8 +176,15 @@ func (c *checker) stmts(stmts []Stmt, sc *scope, f *Function) error {
 			if cond != TypeBool {
 				return failAt("nir.condition-type", s.Pos, "while 的条件必须是 bool，实际为 %s", cond)
 			}
-			if err := c.stmts(s.Body, sc.child(), f); err != nil {
+			c.loops = append(c.loops, s.ID)
+			err = c.stmts(s.Body, sc.child(), f)
+			c.loops = c.loops[:len(c.loops)-1]
+			if err != nil {
 				return err
+			}
+		case OpBreak, OpContinue:
+			if len(c.loops) == 0 || c.loops[len(c.loops)-1] != s.Target {
+				return failAt("nir.loop-target", s.Pos, "%s 的目标 %d 不是当前循环", s.Op, s.Target)
 			}
 		case OpIf:
 			got, err := c.exprType(s.Cond, sc)

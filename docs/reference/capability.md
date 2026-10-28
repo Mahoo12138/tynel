@@ -55,7 +55,7 @@ function neverCalled(n: number): number {
 | 声明 | `function`、参数、顶层 `const`、函数体内 `const` 与已初始化的 `let` | 参数、常量与局部值限 `number`、`boolean`，返回值限 `number`、`boolean` 或 `void`；模块级 `let` 与 `var` 拒绝 |
 | 运算 | `+` `-` `*` `/`，一元 `-` `+`、`!`，比较 `<` `<=` `>` `>=` `===` `!==`，短路 `&&` `\|\|`，三元式 `? :` | 有序比较只接受 `number`；严格相等要求两侧同类型；`&&` / `\|\|` 两侧都必须是 `boolean`；三元式的条件必须是 `boolean`，两臂同类型 |
 | 调用 | 本文件内声明的函数，实参个数与形参一致 | 不支持函数值、方法调用 |
-| 语句 | `return`、表达式语句、语句块、`if` / `else` / `else if`、`while`、分支内 `const` 与已初始化的 `let`、独立的简单赋值 | 表达式语句的结果被丢弃；`if` / `while` 的条件必须是 `boolean`；赋值只支持 `x = value;` |
+| 语句 | `return`、表达式语句、语句块、`if` / `else` / `else if`、`while`、`break` / `continue`、分支内 `const` 与已初始化的 `let`、独立的简单赋值 | 表达式语句的结果被丢弃；`if` / `while` 的条件必须是 `boolean`；`break` / `continue` 只能作用于最近循环 |
 | 输出 | `console.log(<number 或 boolean>)` | 必须是内置 `console`，见下 |
 
 `boolean` 现在是完整的标量：可以作为常量、参数、返回值和输出。`!` 只对 `boolean` 取反；TypeScript 允许 `!1`，但本阶段不把数字的真假转换带进原生后端，`!1` 按 `cap.bad-type` 拒绝。
@@ -70,7 +70,7 @@ function neverCalled(n: number): number {
 
 简单赋值只支持 `x = value;` 这种独立语句，目标必须是可变的 `let`，右值与目标同类型。给 `const`、参数或模块常量赋值报 `cap.assign-immutable`；赋值出现在表达式里报 `cap.assignment-value`；复合赋值报 `cap.compound-assignment`；`++` / `--` 报 `cap.inc-dec`。
 
-`while` 的条件必须是 `boolean`，循环体在函数体内，可以包含 `if`、赋值和嵌套 `while`。条件每轮重新求值，循环可能零次执行；模块级 `while` 报 `cap.unsupported-syntax`。`for`、`do`、`break` 和 `continue` 仍不在子集内。
+`while` 的条件必须是 `boolean`，循环体在函数体内，可以包含 `if`、赋值和嵌套 `while`。条件每轮重新求值，循环可能零次执行；模块级 `while` 报 `cap.unsupported-syntax`。`break` / `continue` 只作用于最近循环，带标签的写法报 `cap.labeled-jump`，循环外的跳转由 TypeScript 先报 `TS1107`。`for` 与 `do` 仍不在子集内。
 
 ## void 与丢弃结果
 
@@ -108,6 +108,8 @@ const x = announce(1);     // 拒绝：void 没有值可以绑
 | `cap.assignment-value` | 赋值出现在表达式里，例如 `const y = (x = 1)` |
 | `cap.compound-assignment` | 复合赋值 `+=`、`-=` 等 |
 | `cap.inc-dec` | 自增自减 `++` / `--` |
+| `cap.labeled-jump` | 带标签的 `break` / `continue` 或带标签语句 |
+| `cap.loop-target` | `break` / `continue` 不在循环里 |
 | `cap.unknown-name` | 引用了本文件之外的名称 |
 | `cap.arg-count` | 实参个数与函数声明的形参个数不一致 |
 | `cap.void-value` | 把 void 调用当作值使用：实参、操作数、返回值、常量初始值 |

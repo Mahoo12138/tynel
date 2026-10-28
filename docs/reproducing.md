@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值，以及 04.03 的 while 循环；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环，以及 04.04 的 break / continue；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -76,6 +76,23 @@ shasum -a 256 out/choices out/choices-replay
 
 循环只在原生程序运行时发生；编译器不证明终止，测试用独立进程超时保护。验收记录见[04.03 验收记录](validation/04-03-while.md)。
 
+## break 与 continue
+
+04.04 的跳转用例分别验证内层 `break`、`continue` 和 `return`：
+
+```zsh
+# 内层 break 不结束外层：预期 3。
+./bin/tynel run tests/source/testdata/break.ts
+
+# continue 回到条件检查：预期 12。
+./bin/tynel run tests/source/testdata/continue.ts
+
+# return 退出整个函数：预期 2。
+./bin/tynel run tests/source/testdata/jump-return.ts
+```
+
+跳转图见[循环跳转](reference/jumps.md)，验收记录见[04.04 验收记录](validation/04-04-jumps.md)。
+
 ## 前置条件
 
 当前开发与验收基线是一台 Mac mini（Mac16,10，Apple M4，10 核，24 GB 内存，macOS 26.6.2）。换机器时，下列条件满足即可复现，机型本身不是契约。
@@ -142,7 +159,7 @@ cd tynel
 # 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
 
-# 只跑源码到原生的回归集合：85 个用例，其中 37 个程序会真的编译并运行。
+# 只跑源码到原生的回归集合：92 个用例，其中 40 个程序会真的编译并运行。
 ./.work/toolchain/go1.27.3-sdk-darwin-arm64/bin/go test -count=1 -v ./tests/source
 ```
 

@@ -54,15 +54,17 @@ const (
 // 调用可能带副作用，必须执行；值没人要，不能顺手打印出去。丢弃的是结果，
 // 不是求值本身。
 const (
-	OpReturn  = "return"
-	OpPrint   = "print"
-	OpLet     = "let"
-	OpDiscard = "discard"
-	OpIf      = "if"
-	OpShort   = "short"
-	OpSelect  = "select"
-	OpSet     = "set"
-	OpWhile   = "while"
+	OpReturn   = "return"
+	OpPrint    = "print"
+	OpLet      = "let"
+	OpDiscard  = "discard"
+	OpIf       = "if"
+	OpShort    = "short"
+	OpSelect   = "select"
+	OpSet      = "set"
+	OpWhile    = "while"
+	OpBreak    = "break"
+	OpContinue = "continue"
 )
 
 // BinaryOperators 是首版允许的算术运算符，顺序用于报错提示。
@@ -128,6 +130,8 @@ type Stmt struct {
 	Mutable   bool   `json:"mutable,omitempty"`   // 仅 let 使用：是否为可变的 let
 	CondPre   []Stmt `json:"condPre,omitempty"`   // 仅 while 使用：每轮条件准备
 	Body      []Stmt `json:"body,omitempty"`      // 仅 while 使用：循环体
+	ID        int    `json:"id,omitempty"`        // 仅 while 使用：循环身份
+	Target    int    `json:"target,omitempty"`    // 仅 break / continue 使用
 	Pos       *Pos   `json:"pos,omitempty"`
 }
 

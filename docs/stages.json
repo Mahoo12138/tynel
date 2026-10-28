@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "04.03",
+  "currentImplementationNode": "04.04",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -481,9 +481,12 @@
             "04.03"
           ],
           "planSection": "PLAN.md#task-04-04",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/jumps.md",
+            "docs/validation/04-04-jumps.md"
+          ]
         },
         {
           "id": "04.05",

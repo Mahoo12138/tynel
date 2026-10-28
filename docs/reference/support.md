@@ -60,8 +60,8 @@
 | 表达式语句 | 支持 | 调用保留副作用；裸值求值后丢弃 |
 | `console.log(x)` | 支持 | 一个参数，`number` 或 `boolean` |
 | `while` | 支持 | 条件每轮重新检查，循环可能零次执行 |
+| `break`、`continue` | 支持 | 无标签，只作用于最近循环；带标签写法拒绝 |
 | `for` | 计划 | 节点 04 之后 |
-| `break`、`continue` | 计划 | 节点 04.04 |
 | `switch`、`try`、`throw` | 拒绝 | `cap.unsupported-syntax` |
 | 顶层 `if` / 顶层语句块 | 拒绝 | 模块体只接受声明、`const` 和表达式语句 |
 

@@ -83,6 +83,8 @@ type lowerer struct {
 	names    map[int]string // 函数声明 ID → NIR 函数名
 	result   string         // 当前正在降低的函数的返回类型
 	temp     int            // 短路结果与实参物化的临时名序号
+	loops    []int          // 当前函数内由内到外的循环 id
+	nextLoop int            // 下一个循环 id
 }
 
 // scope 是当前可见的声明。用声明 ID 而不是名字做键：两个函数里同名的参数是
@@ -139,6 +141,7 @@ func (s *scope) isMutable(id int) bool {
 }
 
 func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
+	l.loops = nil
 	if decl.Result == nil {
 		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 缺少返回类型摘要", decl.Name)
 	}
@@ -320,6 +323,8 @@ func (l *lowerer) statement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) 
 		return l.ifStatement(stmt, sc)
 	case "WhileStatement":
 		return l.whileStatement(stmt, sc)
+	case "BreakStatement", "ContinueStatement":
+		return l.jumpStatement(stmt, sc)
 	case "VariableStatement":
 		return l.localDeclaration(stmt, sc)
 	case "Block":
@@ -380,7 +385,11 @@ func (l *lowerer) whileStatement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, er
 	if err != nil {
 		return nil, err
 	}
+	id := l.nextLoop + 1
+	l.nextLoop = id
+	l.loops = append(l.loops, id)
 	body, err := l.branchStmts(bodyNode, sc.child())
+	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +398,28 @@ func (l *lowerer) whileStatement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, er
 		CondPre: condPre,
 		Cond:    cond,
 		Body:    body,
+		ID:      id,
 		Pos:     l.pos(stmt.Start),
+	}}, nil
+}
+
+// jumpStatement 降低无标签 break / continue。目标永远是当前最内层循环；
+// 带标签的写法直接拒绝，循环外的跳转也拒绝。
+func (l *lowerer) jumpStatement(stmt *frontend.Node, sc *scope) ([]nir.Stmt, error) {
+	if len(stmt.Children) > 0 {
+		return nil, l.fail(stmt.Start, "lower.labeled-jump", "带标签的 %s 不在本阶段子集内", stmt.Kind)
+	}
+	if len(l.loops) == 0 {
+		return nil, l.fail(stmt.Start, "lower.loop-target", "%s 不在循环里", stmt.Kind)
+	}
+	op := nir.OpBreak
+	if stmt.Kind == "ContinueStatement" {
+		op = nir.OpContinue
+	}
+	return []nir.Stmt{{
+		Op:     op,
+		Target: l.loops[len(l.loops)-1],
+		Pos:    l.pos(stmt.Start),
 	}}, nil
 }
 

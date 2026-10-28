@@ -493,6 +493,10 @@ func (b *bodyBuilder) stmt(s stmt, sc *localScope) (ir.Node, error) {
 		))
 		loopBody = append(loopBody, body...)
 		return ir.NewForStmt(b.pos, nil, nil, nil, loopBody, false), nil
+	case "break":
+		return ir.NewBranchStmt(b.pos, ir.OBREAK, nil), nil
+	case "continue":
+		return ir.NewBranchStmt(b.pos, ir.OCONTINUE, nil), nil
 	default:
 		return nil, fmt.Errorf("不支持的语句 op %q", s.Op)
 	}
@@ -702,6 +706,8 @@ type stmt struct {
 	Mutable   bool   `json:"mutable"`
 	CondPre   []stmt `json:"condPre"`
 	Body      []stmt `json:"body"`
+	ID        int    `json:"id"`
+	Target    int    `json:"target"`
 }
 
 type expr struct {

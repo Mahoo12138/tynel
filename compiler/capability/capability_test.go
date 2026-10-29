@@ -556,3 +556,52 @@ func propertyAccess(name string, object frontend.Node) frontend.Node {
 func consoleLog(arg frontend.Node) frontend.Node {
 	return typed("CallExpression", frontend.KindVoid, propertyAccess("log", ident("console", 0)), arg)
 }
+
+func TestAliasesAllowScalars(t *testing.T) {
+	facts := base()
+	facts.Aliases = []frontend.Alias{
+		{Name: "Amount", Start: 0, Length: 10, Kind: frontend.KindNumber},
+		{Name: "Flag", Start: 11, Length: 10, Kind: frontend.KindBoolean},
+	}
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("基础别名不应产生诊断：%v", findings)
+	}
+}
+
+func TestAliasesRejectOtherKinds(t *testing.T) {
+	cases := []struct {
+		name string
+		kind frontend.Kind
+		code string
+	}{
+		{"联合", frontend.KindUnion, "cap.bad-type"},
+		{"接口", frontend.KindInterface, "cap.interface"},
+		{"any", frontend.KindAny, "cap.any"},
+		{"其他", frontend.KindOther, "cap.bad-type"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			facts := base()
+			facts.Aliases = []frontend.Alias{{Name: "Bad", Start: 0, Length: 10, Kind: c.kind}}
+			wantCode(t, check(t, facts), c.code)
+		})
+	}
+}
+
+func TestTypeOnlyImportAllowed(t *testing.T) {
+	facts := base()
+	facts.Module = &frontend.Node{Kind: "Block", Start: 0, Length: 10, Children: []frontend.Node{
+		{Kind: "ImportDeclaration", Start: 0, Length: 5, TypeOnly: true},
+	}}
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("import type 不应产生诊断：%v", findings)
+	}
+}
+
+func TestValueImportRejected(t *testing.T) {
+	facts := base()
+	facts.Module = &frontend.Node{Kind: "Block", Start: 0, Length: 10, Children: []frontend.Node{
+		{Kind: "ImportDeclaration", Start: 0, Length: 5},
+	}}
+	wantCode(t, check(t, facts), "cap.import-value")
+}

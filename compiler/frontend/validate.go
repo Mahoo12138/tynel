@@ -67,6 +67,15 @@ func (f *Facts) Validate() error {
 		byID[d.ID] = d
 	}
 
+	for _, alias := range f.Aliases {
+		if alias.Name == "" || alias.Start < 0 || alias.Length <= 0 {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-alias", "类型别名 %q 的名字或位置不合法", alias.Name)
+		}
+		if !alias.Kind.valid() {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-alias-kind", "类型别名 %q 的类别 %q 不认识", alias.Name, alias.Kind)
+		}
+	}
+
 	// 每个参数必须恰好属于一个函数：既不能没有归属，也不能被两个函数共用。
 	owner := make(map[int]int, len(f.Declarations))
 	for i := range f.Declarations {

@@ -111,6 +111,16 @@ func (s *Snapshot) MapDiagnostics(in []FrontendDiagnostic) ([]Diagnostic, error)
 			})
 			continue
 		}
+		if raw.Start < 0 {
+			// 程序级诊断没有源码位置；不要把它硬塞进入口快照。
+			out = append(out, Diagnostic{
+				Severity: severity,
+				Code:     raw.Code,
+				Message:  raw.Message,
+				Location: Location{Path: s.path},
+			})
+			continue
+		}
 		r, err := s.Range(raw.Start, raw.Start+raw.Length)
 		if err != nil {
 			return nil, err

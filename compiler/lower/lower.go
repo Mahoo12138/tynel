@@ -189,6 +189,14 @@ func (l *lowerer) entry() (*nir.Function, error) {
 	for i := range l.facts.Module.Children {
 		stmt := &l.facts.Module.Children[i]
 		switch stmt.Kind {
+		case "TypeAliasDeclaration", "InterfaceDeclaration":
+			// 类型声明不产生运行时值；能力检查已经核对过类别。
+			continue
+		case "ImportDeclaration":
+			if stmt.TypeOnly {
+				continue
+			}
+			return nil, l.fail(stmt.Start, "lower.import-value", "值导入不在本阶段子集内；只支持 import type")
 		case "Const":
 			decl, ok := l.facts.Declaration(stmt.Decl)
 			if !ok || decl.Kind != frontend.DeclConst {

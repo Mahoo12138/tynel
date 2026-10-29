@@ -51,6 +51,7 @@ type factNode struct {
 	Target   int        `json:"target,omitempty"`
 	Decl     int        `json:"decl,omitempty"`
 	Bits     string     `json:"bits,omitempty"`
+	TypeOnly bool       `json:"typeOnly,omitempty"`
 	Type     *factType  `json:"type,omitempty"`
 	Children []factNode `json:"children,omitempty"`
 }
@@ -70,6 +71,13 @@ type factCall struct {
 	Result    factType   `json:"result"`
 }
 
+type factAlias struct {
+	Name   string `json:"name"`
+	Start  int    `json:"start"`
+	Length int    `json:"length"`
+	Kind   string `json:"kind"`
+}
+
 type factExpression struct {
 	Start  int      `json:"start"`
 	Length int      `json:"length"`
@@ -86,6 +94,7 @@ type factsPayload struct {
 	References    []factReference   `json:"references"`
 	Calls         []factCall        `json:"calls"`
 	Expressions   []factExpression  `json:"expressions"`
+	Aliases       []factAlias       `json:"aliases,omitempty"`
 }
 
 // Facts 把这次检查的事实导出为 JSON。
@@ -213,6 +222,13 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 					})
 				}
 			}
+		case ast.IsTypeAliasDeclaration(stmt), ast.IsInterfaceDeclaration(stmt):
+			b.declareAlias(stmt)
+			module.Children = append(module.Children, factNode{
+				Kind:   kindName(stmt.Kind),
+				Start:  b.startOf(stmt),
+				Length: stmt.End() - b.startOf(stmt),
+			})
 		default:
 			// 模块级表达式要等所有声明登记完再转：它可能调用后面才声明的函数。
 			// 先占位，保持源码顺序。
@@ -234,6 +250,31 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 			b.fillVariable(item)
 		}
 	}
+}
+
+// declareAlias 记录类型别名或接口。别名只活在类型空间，不分配运行时值。
+func (b *factBuilder) declareAlias(node *ast.Node) {
+	alias := factAlias{
+		Name:   node.Name().Text(),
+		Start:  b.startOf(node),
+		Length: node.End() - b.startOf(node),
+	}
+	if ast.IsInterfaceDeclaration(node) {
+		alias.Kind = "interface"
+	} else {
+		typeNode := node.AsTypeAliasDeclaration().Type
+		switch {
+		case typeNode == nil:
+			alias.Kind = "other"
+		case typeNode.Kind == ast.KindUnionType:
+			alias.Kind = "union"
+		case typeNode.Kind == ast.KindAnyKeyword:
+			alias.Kind = "any"
+		default:
+			alias.Kind = string(b.typeOf(b.checker.GetTypeAtLocation(typeNode)).Kind)
+		}
+	}
+	b.payload.Aliases = append(b.payload.Aliases, alias)
 }
 
 // declareFunction 只登记签名与参数，不碰函数体。
@@ -487,6 +528,9 @@ func (b *factBuilder) bodyNode(node *ast.Node) *factNode {
 		Kind:   kindName(node.Kind),
 		Start:  b.startOf(node),
 		Length: node.End() - b.startOf(node),
+	}
+	if ast.IsImportDeclaration(node) {
+		out.TypeOnly = importIsTypeOnly(node.AsImportDeclaration().ImportClause)
 	}
 	if ast.IsExpression(node) {
 		typ := b.typeOf(b.checker.GetTypeAtLocation(node))

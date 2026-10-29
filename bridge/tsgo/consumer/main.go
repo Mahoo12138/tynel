@@ -46,7 +46,7 @@ func main() {
 	}
 	flag.Parse()
 
-	if flag.NArg() != 1 {
+	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(diagnostic.ExitUsage)
 	}
@@ -56,14 +56,27 @@ func main() {
 		os.Exit(diagnostic.ExitUsage)
 	}
 
-	// 唯一一次磁盘读取。之后无论原文件怎么改，诊断都对应这一刻的内容。
+	// 入口只读一次。依赖文件也在这里读成快照，后续不再访问磁盘。
 	snapshot, err := source.Read(path, source.DefaultLimits())
 	if err != nil {
 		report(err)
 	}
+	var deps []*source.Snapshot
+	for _, arg := range flag.Args()[1:] {
+		depPath, err := filepath.Abs(arg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "无法解析依赖路径：%v\n", err)
+			os.Exit(diagnostic.ExitUsage)
+		}
+		dep, err := source.Read(depPath, source.DefaultLimits())
+		if err != nil {
+			report(err)
+		}
+		deps = append(deps, dep)
+	}
 
 	if *pipelineOut {
-		runPipeline(snapshot, *want)
+		runPipeline(snapshot, deps, *want)
 		return
 	}
 
@@ -94,7 +107,7 @@ func main() {
 		return
 	}
 
-	diagnostics, err := check(snapshot)
+	diagnostics, err := checkFiles(snapshot, deps)
 	if err != nil {
 		report(err)
 	}
@@ -128,7 +141,7 @@ func main() {
 // 与 -capability、-nir 不同，它总是退出 0：结论写在结果里（诊断、能力项、
 // 是否通过验证），调用方按内容决定退出状态。这样一份结果只有一个来源，不会
 // 出现「JSON 说失败但退出 0」之类的分裂。只有真正取不到结果时才非零退出。
-func runPipeline(snapshot *source.Snapshot, want string) {
+func runPipeline(snapshot *source.Snapshot, deps []*source.Snapshot, want string) {
 	switch want {
 	case "check", "build", "facts", "nir":
 	default:
@@ -145,7 +158,7 @@ func runPipeline(snapshot *source.Snapshot, want string) {
 		Capability:    []pipeline.Finding{},
 	}
 
-	diagnostics, err := check(snapshot)
+	diagnostics, err := checkFiles(snapshot, deps)
 	if err != nil {
 		report(err)
 	}
@@ -157,7 +170,7 @@ func runPipeline(snapshot *source.Snapshot, want string) {
 		return
 	}
 
-	facts, err := factsOf(snapshot)
+	facts, err := factsOfFiles(snapshot, deps)
 	if err != nil {
 		report(err)
 	}
@@ -278,12 +291,27 @@ func runImports(snapshot *source.Snapshot) {
 	writeJSON(imports)
 }
 
+// openSession 把入口和依赖一起放进程序；依赖只用于类型解析，不单独输出。
+func openSession(entry *source.Snapshot, deps []*source.Snapshot) (*tyneladapter.Session, error) {
+	inputs := make([]tyneladapter.Input, 0, len(deps)+1)
+	inputs = append(inputs, tyneladapter.Input{FileName: entry.Path(), Source: entry.Bytes()})
+	for _, dep := range deps {
+		inputs = append(inputs, tyneladapter.Input{FileName: dep.Path(), Source: dep.Bytes()})
+	}
+	return tyneladapter.Open(tyneladapter.Options{
+		FileName: entry.Path(),
+		Source:   entry.Bytes(),
+		Files:    inputs,
+	})
+}
+
 // factsOf 取事实并解码校验，供 -facts 与 -capability 共用。
 func factsOf(snapshot *source.Snapshot) (*frontend.Facts, error) {
-	session, err := tyneladapter.Open(tyneladapter.Options{
-		FileName: snapshot.Path(),
-		Source:   snapshot.Bytes(),
-	})
+	return factsOfFiles(snapshot, nil)
+}
+
+func factsOfFiles(snapshot *source.Snapshot, deps []*source.Snapshot) (*frontend.Facts, error) {
+	session, err := openSession(snapshot, deps)
 	if err != nil {
 		return nil, diagnostic.New(diagnostic.Environment, "frontend.session", "无法建立检查会话").WithDetail(err.Error())
 	}
@@ -344,10 +372,11 @@ func dumpFacts(snapshot *source.Snapshot) ([]byte, error) {
 
 // check 建立会话、取诊断、关闭会话，再把结果映射到快照位置。
 func check(snapshot *source.Snapshot) ([]source.Diagnostic, error) {
-	session, err := tyneladapter.Open(tyneladapter.Options{
-		FileName: snapshot.Path(),
-		Source:   snapshot.Bytes(),
-	})
+	return checkFiles(snapshot, nil)
+}
+
+func checkFiles(snapshot *source.Snapshot, deps []*source.Snapshot) ([]source.Diagnostic, error) {
+	session, err := openSession(snapshot, deps)
 	if err != nil {
 		return nil, diagnostic.New(diagnostic.Environment, "frontend.session", "无法建立检查会话").WithDetail(err.Error())
 	}

@@ -129,7 +129,15 @@ func (h *Host) Imports(file string, runner toolchain.Runner) ([]Import, error) {
 
 // Analyze 让宿主检查一个文件，返回协议结果。want 决定附带事实还是 NIR。
 func (h *Host) Analyze(file, want string, runner toolchain.Runner) (*pipeline.Result, error) {
-	out, err := runner.Run(h.Path, "-pipeline", "-want="+want, file)
+	return h.AnalyzeFiles(file, nil, want, runner)
+}
+
+// AnalyzeFiles 让宿主把入口和依赖一起放进程序。依赖只用于类型解析；
+// 诊断、事实和降低仍以入口为准。
+func (h *Host) AnalyzeFiles(file string, deps []string, want string, runner toolchain.Runner) (*pipeline.Result, error) {
+	args := []string{"-pipeline", "-want=" + want, file}
+	args = append(args, deps...)
+	out, err := runner.Run(h.Path, args...)
 	if err != nil {
 		return nil, diagnostic.New(diagnostic.Environment, "host.start-failed", "无法启动前端宿主 %s", h.Path).WithDetail(err.Error())
 	}

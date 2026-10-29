@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue、04.05 的直接与相互递归、04.06 的状态与控制组合，04.07 的 Collatz 真实源码实验，05.01 的项目根与路径解析，以及 05.02 的依赖图与源码快照；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue、04.05 的直接与相互递归、04.06 的状态与控制组合，04.07 的 Collatz 真实源码实验，05.01 的项目根与路径解析，05.02 的依赖图与源码快照，以及 05.03 的类型别名与纯类型导入；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -186,6 +186,30 @@ cd /tmp
 ```
 
 模块图、解析日志和检查器访问方式见[模块图与依赖快照](reference/module-graph.md)，验收记录见[05.02 验收记录](validation/05-02-graph.md)。
+
+## 类型别名与纯类型导入
+
+05.03 的夹具在 `compiler/graph/testdata/alias`：
+
+```zsh
+# 纯类型导入：预期 42，且 NIR 里没有运行时导入。
+./bin/tynel run --root compiler/graph/testdata/alias main.ts
+
+# 修改 types.ts 的 Amount 为 string，再检查：预期 TS2322，退出 1。
+./bin/tynel check --root compiler/graph/testdata/alias main.ts
+
+# 联合、接口、any 别名：预期能力限制退出 3。
+./bin/tynel check --root compiler/graph/testdata/alias union.ts
+./bin/tynel check --root compiler/graph/testdata/alias interface.ts
+./bin/tynel check --root compiler/graph/testdata/alias any.ts
+
+# 类型名当值、纯类型导入被调用、循环别名：预期源码错误退出 1。
+./bin/tynel check --root compiler/graph/testdata/alias value.ts
+./bin/tynel check --root compiler/graph/testdata/alias called.ts
+./bin/tynel check --root compiler/graph/testdata/alias cycle.ts
+```
+
+类型空间与值空间、允许的别名类别见[类型别名与纯类型导入](reference/type-aliases.md)，验收记录见[05.03 验收记录](validation/05-03-aliases.md)。
 
 ## 前置条件
 

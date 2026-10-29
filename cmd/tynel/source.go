@@ -187,7 +187,7 @@ func (a *app) loadGraph(parsed sourceArgs) (*graph.Graph, error) {
 }
 
 // analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
-func (a *app) analyze(file, want string) (*pipeline.Result, error) {
+func (a *app) analyze(file, want string, deps []string) (*pipeline.Result, error) {
 	if a.frontend != nil {
 		// 测试用：直接给出前端结果，不启动宿主进程。
 		return a.frontend(file, want)
@@ -199,7 +199,7 @@ func (a *app) analyze(file, want string) (*pipeline.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return front.Analyze(file, want, a.runner)
+	return front.AnalyzeFiles(file, deps, want, a.runner)
 }
 
 // render 把诊断与能力结论写到 stderr。stdout 只留给命令的结果。
@@ -230,10 +230,11 @@ func (a *app) check(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := a.loadGraph(parsed); err != nil {
+	g, err := a.loadGraph(parsed)
+	if err != nil {
 		return err
 	}
-	result, err := a.analyze(file, "check")
+	result, err := a.analyze(file, "check", graphDeps(g))
 	if err != nil {
 		return err
 	}
@@ -265,7 +266,7 @@ func (a *app) build(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(file, "build")
+	result, err := a.analyze(file, "build", graphDeps(g))
 	if err != nil {
 		return err
 	}
@@ -315,7 +316,7 @@ func (a *app) run(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(file, "build")
+	result, err := a.analyze(file, "build", graphDeps(g))
 	if err != nil {
 		return err
 	}
@@ -386,7 +387,11 @@ func (a *app) dump(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(file, what)
+	g, err := a.loadGraph(parsed)
+	if err != nil {
+		return err
+	}
+	result, err := a.analyze(file, what, graphDeps(g))
 	if err != nil {
 		return err
 	}
@@ -411,6 +416,20 @@ func (a *app) dump(args []string) error {
 		return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出 %s 失败", what).WithDetail(err.Error())
 	}
 	return nil
+}
+
+// graphDeps 返回除入口外的依赖绝对路径，供前端宿主一起载入。
+func graphDeps(g *graph.Graph) []string {
+	if g == nil {
+		return nil
+	}
+	var out []string
+	for _, file := range g.Files {
+		if file.Abs != g.Entry.Abs {
+			out = append(out, file.Abs)
+		}
+	}
+	return out
 }
 
 func graphHash(g *graph.Graph) string {

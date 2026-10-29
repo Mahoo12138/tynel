@@ -137,8 +137,10 @@ func Open(opts Options) (*Session, error) {
 
 	fs := bundled.WrapFS(vfstest.FromMap(files, true))
 	options := &core.CompilerOptions{
-		Target: core.ScriptTargetESNext,
-		Strict: core.TSTrue,
+		Target:                     core.ScriptTargetESNext,
+		Strict:                     core.TSTrue,
+		NoEmit:                     core.TSTrue,
+		AllowImportingTsExtensions: core.TSTrue,
 	}
 	program := compiler.NewProgram(compiler.ProgramOptions{
 		Config: &tsoptions.ParsedCommandLine{

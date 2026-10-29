@@ -19,18 +19,20 @@ import (
 type Kind string
 
 const (
-	KindNumber  Kind = "number"
-	KindBoolean Kind = "boolean"
-	KindString  Kind = "string"
-	KindVoid    Kind = "void"
-	KindAny     Kind = "any"
-	KindOther   Kind = "other"
+	KindNumber    Kind = "number"
+	KindBoolean   Kind = "boolean"
+	KindString    Kind = "string"
+	KindVoid      Kind = "void"
+	KindAny       Kind = "any"
+	KindOther     Kind = "other"
+	KindUnion     Kind = "union"
+	KindInterface Kind = "interface"
 )
 
 // valid 报告类别是否在允许集合内。校验按枚举比较，不做字符串规整。
 func (k Kind) valid() bool {
 	switch k {
-	case KindNumber, KindBoolean, KindString, KindVoid, KindAny, KindOther:
+	case KindNumber, KindBoolean, KindString, KindVoid, KindAny, KindOther, KindUnion, KindInterface:
 		return true
 	}
 	return false
@@ -76,6 +78,7 @@ type Node struct {
 	Target   int    `json:"target,omitempty"`
 	Decl     int    `json:"decl,omitempty"`
 	Bits     string `json:"bits,omitempty"`
+	TypeOnly bool   `json:"typeOnly,omitempty"`
 	Type     *Type  `json:"type,omitempty"`
 	Children []Node `json:"children,omitempty"`
 }
@@ -92,6 +95,15 @@ type Declaration struct {
 	Parameters []int    `json:"parameters,omitempty"`
 	Body       *Node    `json:"body,omitempty"`
 	Mutable    bool     `json:"mutable,omitempty"`
+}
+
+// Alias 是一个类型别名或接口声明。Kind 是类型空间的归类：number、boolean、
+// interface、union、any 或 other。别名不产生运行时值。
+type Alias struct {
+	Name   string `json:"name"`
+	Start  int    `json:"start"`
+	Length int    `json:"length"`
+	Kind   Kind   `json:"kind"`
 }
 
 // Reference 是一次名称引用。Target 为 0 表示没有解析到本文件内的声明。
@@ -129,6 +141,7 @@ type Facts struct {
 	References    []Reference   `json:"references"`
 	Calls         []Call        `json:"calls"`
 	Expressions   []Expression  `json:"expressions"`
+	Aliases       []Alias       `json:"aliases,omitempty"`
 }
 
 // Decode 解析适配层输出的事实。未知字段直接拒绝：字段名对不上说明适配层
@@ -175,6 +188,7 @@ func Combine(a, b *Facts) (*Facts, error) {
 		References:    append(append([]Reference{}, a.References...), b.References...),
 		Calls:         append(append([]Call{}, a.Calls...), b.Calls...),
 		Expressions:   append(append([]Expression{}, a.Expressions...), b.Expressions...),
+		Aliases:       append(append([]Alias{}, a.Aliases...), b.Aliases...),
 	}
 	if err := merged.Validate(); err != nil {
 		return nil, err

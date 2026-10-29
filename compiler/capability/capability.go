@@ -26,6 +26,20 @@ func Check(snapshot *source.Snapshot, facts *frontend.Facts) ([]*diagnostic.Diag
 		return nil, err
 	}
 	c := &checker{snapshot: snapshot, facts: facts}
+	for _, alias := range facts.Aliases {
+		switch alias.Kind {
+		case frontend.KindNumber, frontend.KindBoolean:
+			// 基础别名只活在类型空间，不产生运行时值。
+		case frontend.KindAny:
+			c.report(alias.Start, "cap.any", "类型别名 %q 是 any 或 unknown", alias.Name)
+		case "interface":
+			c.report(alias.Start, "cap.interface", "接口 %q 不在本阶段子集内；类型别名必须直接落到 number 或 boolean", alias.Name)
+		case "union":
+			c.report(alias.Start, "cap.bad-type", "类型别名 %q 是联合类型，本阶段不支持", alias.Name)
+		default:
+			c.report(alias.Start, "cap.bad-type", "类型别名 %q 最终是 %s，本阶段只支持 number 与 boolean", alias.Name, alias.Kind)
+		}
+	}
 	for i := range facts.Declarations {
 		decl := &facts.Declarations[i]
 		c.declaration(decl)
@@ -103,6 +117,16 @@ func (c *checker) node(n *frontend.Node) {
 		return
 	}
 	switch n.Kind {
+	case "TypeAliasDeclaration", "InterfaceDeclaration":
+		// 类型声明由 Aliases 单独核对，这里不进入运行值。
+		return
+	case "ImportDeclaration":
+		if n.TypeOnly {
+			// 纯类型导入没有运行时动作；值导入要等到 05.04。
+			return
+		}
+		c.report(n.Start, "cap.import-value", "值导入不在本阶段子集内；只支持 import type")
+		return
 	case "Block":
 		c.children(n)
 	case "Const":

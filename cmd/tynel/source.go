@@ -393,13 +393,31 @@ func (a *app) dump(args []string) error {
 	}
 	what := args[0]
 	switch what {
-	case "facts", "nir", "graph", "modules":
+	case "facts", "nir", "graph", "modules", "init":
 	default:
-		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts、nir、graph 或 modules，收到 %q", what)
+		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts、nir、graph、modules 或 init，收到 %q", what)
 	}
 	parsed, err := parseSourceArgs("dump", args[1:], false, false)
 	if err != nil {
 		return err
+	}
+	if what == "init" {
+		table, err := a.loadModules(parsed)
+		if err != nil {
+			return err
+		}
+		plan, err := modules.Plan(table)
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(plan, "", "  ")
+		if err != nil {
+			return diagnostic.New(diagnostic.Internal, "cli.encode-failed", "无法序列化初始化计划").WithDetail(err.Error())
+		}
+		if _, err := a.stdout.Write(append(data, '\n')); err != nil {
+			return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出初始化计划失败").WithDetail(err.Error())
+		}
+		return nil
 	}
 	if what == "modules" {
 		table, err := a.loadModules(parsed)

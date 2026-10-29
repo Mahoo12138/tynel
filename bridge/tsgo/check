@@ -7,7 +7,7 @@
 # 位置、截断源码、缺文件、外部导入 internal 被拒、源码身份不符被拒、声明库
 # 缺失被拒、声明事实、原生能力白名单、void 与丢弃结果、boolean 标量、分支
 # 与作用域、返回路径、短路、三元式、条件组合、已初始化的 let、局部赋值、while
-# 循环、break / continue、直接与相互递归、状态与控制组合、导入的类型边与值边、类型别名与纯类型导入、输出格式、从源码降低
+# 循环、break / continue、直接与相互递归、状态与控制组合、导入的类型边与值边、类型别名与纯类型导入、模块初始化顺序、输出格式、从源码降低
 # 到可运行的原生程序，以及主命令行的 check、build、run、dump。
 #
 # 依赖 ./tools/toolchain/prep 已经准备过前端源码；本脚本只读那棵树，不修改它。
@@ -487,6 +487,35 @@ MODULESJSON
     pass "缺失导出按源码错误拒绝"
   else
     fail "缺失导出应退出 1，实际 $code：$out"
+  fi
+
+  "$CLI" dump init --root "$ROOT/compiler/graph/testdata/init" main.ts >"$cli_tmp/init.json" 2>"$cli_tmp/err"; code=$?
+  if [[ $code -eq 0 ]] && python3 - "$cli_tmp/init.json" <<'INITJSON'
+import json, sys
+data = json.load(open(sys.argv[1]))
+order = [path.rsplit("/", 1)[-1] for path in data["order"]]
+assert order == ["shared.ts", "b.ts", "a.ts", "main.ts"], order
+values = [item["value"] for item in data["prints"]]
+assert values == ["1", "3", "2", "4"], values
+INITJSON
+  then
+    pass "初始化顺序遵守导入顺序且共享依赖只执行一次"
+  else
+    fail "初始化顺序不符合预期（退出 $code）"
+  fi
+
+  "$CLI" dump init --root "$ROOT/compiler/graph/testdata/init" type-main.ts >"$cli_tmp/init-type.json" 2>"$cli_tmp/err"; code=$?
+  if [[ $code -eq 0 ]] && python3 - "$cli_tmp/init-type.json" <<'INITTYPE'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert [path.rsplit("/", 1)[-1] for path in data["order"]] == ["type-main.ts"], data
+assert [item["value"] for item in data["prints"]] == ["5"], data
+assert len(data["typeEdges"]) == 1, data
+INITTYPE
+  then
+    pass "纯类型依赖不进入初始化执行"
+  else
+    fail "纯类型依赖初始化计划不符合预期（退出 $code）"
   fi
 
   if "$CLI" build "$ROOT/bridge/tsgo/testdata/add.ts" -o "$cli_tmp/app" >/dev/null 2>&1 && [[ "$("$cli_tmp/app")" == "42" ]]; then

@@ -80,6 +80,7 @@
 | `tynel dump nir` | 支持 | 导出通过验证的 NIR |
 | `tynel dump graph` | 支持 | 输出文件图、边和类型边标记 |
 | `tynel dump modules` | 支持 | 输出命名导出与导入绑定 |
+| `tynel dump init` | 支持 | 输出模块初始化顺序、值边和类型边 |
 | `tynel build-ir` | 支持 | 从固定 NIR 回放 |
 | 项目根与路径解析 | 支持 | `--root` 指定根；显式 `.ts`、大小写精确、符号链接不越界 |
 | 依赖图与快照 | 支持 | 显式相对 `.ts`、类型边/值边、缺失目标与环拒绝 |

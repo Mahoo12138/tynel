@@ -62,4 +62,6 @@ MVP 的交付物是编译器本身：通过 `tynel build input.ts -o out/program
 
 05.04 已完成：跨模块名称绑定。`tynel dump modules` 用模块绝对路径加模块内声明 ID 建立符号表；`a.ts` 和 `b.ts` 都导出 `helper`，`main.ts` 的 `h`、`h2` 分别绑定到两个模块，`base` 绑定到 `a.ts` 的顶层常量。缺导出报 `module.missing-export`，函数读取模块级 `const` 报 `module.captured-variable`。规则见[跨模块名称绑定](docs/reference/module-bindings.md)，验收记录见[05.04 验收记录](docs/validation/05-04-bindings.md)。
 
-下一步进入 05.05：规定并实现模块初始化顺序。节点 01、02、03、04 的全部子节点与 05.01 至 05.04 已通过正常、错误和边界验收，05 的其余子节点与 06 仍为计划状态。
+05.05 已完成：模块初始化顺序。`tynel dump init` 从入口按源码导入顺序深度优先，先值依赖、后当前模块，共享依赖只执行一次；`main.ts` 先导入 `b` 再导入 `a`，打印顺序是 `1 3 2 4`。纯类型依赖进入 `typeEdges`，不进入执行顺序，`types.ts` 里的 `console.log(9)` 不打印。规则见[模块初始化顺序](docs/reference/init-order.md)，验收记录见[05.05 验收记录](docs/validation/05-05-init.md)。
+
+下一步进入 05.06：合并模块生成一个原生程序。节点 01、02、03、04 的全部子节点与 05.01 至 05.05 已通过正常、错误和边界验收，05 的其余子节点与 06 仍为计划状态。

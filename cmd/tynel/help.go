@@ -13,10 +13,10 @@ const usageText = `tynel 是 TypeScript 到原生二进制的编译器。
   tynel <命令> [参数]
 
 命令：
-  check <file.ts> [--json]      检查源码与原生子集，验证 NIR，不生成机器码
-  build <file.ts> -o <路径>     编译成原生程序，不运行
-  run <file.ts>                 编译并运行本次产物
-  dump facts|nir <file.ts>      输出前端事实或 NIR（JSON）
+  check <file.ts> [--root <目录>] [--json]  检查源码与原生子集，验证 NIR，不生成机器码
+  build <file.ts> -o <路径> [--root <目录>] 编译成原生程序，不运行
+  run <file.ts> [--root <目录>]             编译并运行本次产物
+  dump facts|nir <file.ts> [--root <目录>]  输出前端事实或 NIR（JSON）
   version                       显示版本、目标平台和锁定的工具链身份
   help [命令]                   显示总体帮助或某个命令的说明
   toolchain                     显示锁定工具链和各工具的实际路径（开发命令）
@@ -44,6 +44,9 @@ var topicHelp = map[string]string{
 默认把诊断写到标准错误，成功时在标准输出打一行摘要。加 --json 时把完整
 结果写到标准输出：诊断、能力结论、函数数量与 NIR 是否通过验证。
 
+--root 指定项目根；入口按项目根解释，而不是按当前工作目录解释。缺省时用
+仓库根。
+
 退出状态：源码错误 1，能力限制 3，通过 0。
 `,
 	"build": `tynel build <file.ts> -o <路径>
@@ -56,6 +59,8 @@ var topicHelp = map[string]string{
 构建记录写不进去时产物会被删除：没有记录的产物无法复核来源。
 
 首次运行会按需构建前端宿主，进度写在标准错误，不混入标准输出。
+
+--root 指定项目根；入口和显式相对导入都按这个根解释。
 `,
 	"run": `tynel run <file.ts>
 
@@ -64,12 +69,16 @@ var topicHelp = map[string]string{
 
 程序的标准输出与标准错误直接连到当前终端。程序退出状态原样作为本命令的
 退出状态；编译失败时仍用 1–5 这几类。
+
+--root 指定项目根；入口按这个根解释。
 `,
 	"dump": `tynel dump facts <file.ts>
 tynel dump nir <file.ts>
 
 输出前端事实或降低后的 NIR，只有 JSON，没有进度日志。源码有错时退出 1，
 超出原生子集时退出 3，两种情况都不输出 JSON。
+
+--root 指定项目根；入口按这个根解释。
 `,
 	"version": `tynel version
 

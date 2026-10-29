@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
 	"github.com/Mahoo12138/tynel/compiler/pipeline"
@@ -32,8 +33,22 @@ type app struct {
 }
 
 func newApp(stdout, stderr io.Writer) *app {
-	root, ok := toolchain.FindRoot(".")
+	root, ok := findRepoRoot()
 	return &app{stdout: stdout, stderr: stderr, runner: toolchain.Exec{}, root: root, hasRoot: ok}
+}
+
+// findRepoRoot 先按当前工作目录向上找锁文件；找不到时再从可执行文件所在
+// 目录向上找。后一条让 bin/tynel 可以从任意工作目录启动，但项目根仍由
+// --root 或入口路径决定，不会把工作目录误当成项目根。
+func findRepoRoot() (string, bool) {
+	if root, ok := toolchain.FindRoot("."); ok {
+		return root, true
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	return toolchain.FindRoot(filepath.Dir(exe))
 }
 
 // run 执行一次命令行调用并返回进程退出状态。

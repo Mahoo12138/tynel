@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue、04.05 的直接与相互递归、04.06 的状态与控制组合，以及 04.07 的 Collatz 真实源码实验；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue、04.05 的直接与相互递归、04.06 的状态与控制组合，04.07 的 Collatz 真实源码实验，以及 05.01 的项目根与路径解析；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -147,6 +147,28 @@ node --experimental-strip-types examples/collatz.ts
 ```
 
 叙述见[用一个小工具试状态与循环](notes/04-loops.md)，验收记录见[04.07 验收记录](validation/04-loops.md)。
+
+## 项目根与路径解析
+
+05.01 的路径夹具在 `compiler/project/testdata/project`，包含中文、空格和同名文件：
+
+```zsh
+# 从仓库根按项目根构建：预期输出 1。
+./bin/tynel run --root compiler/project/testdata/project "入口 文件.ts"
+
+# 从任意工作目录用同一个根构建：产物应与上一条一致。
+cd /tmp
+/Users/mahoo/Projects/tynel/bin/tynel build \
+  --root /Users/mahoo/Projects/tynel/compiler/project/testdata/project \
+  "入口 文件.ts" -o /tmp/root-b
+
+# 失败写法：缺文件、越界和错误大小写。
+./bin/tynel check --root compiler/project/testdata/project 缺失.ts
+./bin/tynel check --root compiler/project/testdata/project ../outside.ts
+./bin/tynel check --root compiler/project/testdata/project SRC/同名.ts
+```
+
+规则见[项目根与路径解析](reference/project-paths.md)，验收记录见[05.01 验收记录](validation/05-01-paths.md)。
 
 ## 前置条件
 

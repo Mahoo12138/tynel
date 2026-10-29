@@ -13,6 +13,7 @@ import (
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
 	"github.com/Mahoo12138/tynel/compiler/nir"
 	"github.com/Mahoo12138/tynel/compiler/pipeline"
+	"github.com/Mahoo12138/tynel/compiler/project"
 	"github.com/Mahoo12138/tynel/internal/build"
 	"github.com/Mahoo12138/tynel/internal/host"
 	"github.com/Mahoo12138/tynel/internal/toolchain"
@@ -60,6 +61,7 @@ func (a *app) programRunner() programRunner {
 type sourceArgs struct {
 	file   string
 	output string
+	root   string
 	json   bool
 }
 
@@ -78,6 +80,14 @@ func parseSourceArgs(command string, args []string, allowOutput, allowJSON bool)
 			parsed.output = strings.TrimPrefix(arg, "-o=")
 		case allowJSON && arg == "--json":
 			parsed.json = true
+		case arg == "--root":
+			if i+1 >= len(args) {
+				return parsed, diagnostic.New(diagnostic.Usage, "cli.missing-argument", "%s 的 --root 需要目录", command)
+			}
+			parsed.root = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--root="):
+			parsed.root = strings.TrimPrefix(arg, "--root=")
 		case strings.HasPrefix(arg, "-"):
 			return parsed, diagnostic.New(diagnostic.Usage, "cli.bad-flag", "%s 不认识选项 %q", command, arg)
 		case parsed.file == "":
@@ -93,6 +103,32 @@ func parseSourceArgs(command string, args []string, allowOutput, allowJSON bool)
 		return parsed, diagnostic.New(diagnostic.Usage, "cli.missing-argument", "%s 需要 -o 指定输出路径", command)
 	}
 	return parsed, nil
+}
+
+// resolveSource 把入口固定到项目根下，并返回给前端宿主的绝对路径。
+// 没有 --root 时沿用仓库根，保持单文件示例的旧行为；显式 --root 时，入口
+// 按该项目根解释，而不是按当前工作目录解释。
+func (a *app) resolveSource(parsed sourceArgs) (string, error) {
+	if a.frontend != nil {
+		// 测试用：假前端不读磁盘，路径原样传入。
+		return parsed.file, nil
+	}
+	root := a.root
+	if parsed.root != "" {
+		root = parsed.root
+	}
+	if root == "" {
+		return "", diagnostic.New(diagnostic.Environment, "project.not-found", "找不到项目根；用 --root 指定目录")
+	}
+	p, err := project.Open(root)
+	if err != nil {
+		return "", err
+	}
+	file, err := p.ResolveEntry(parsed.file)
+	if err != nil {
+		return "", err
+	}
+	return file.Abs, nil
 }
 
 // analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
@@ -135,7 +171,11 @@ func (a *app) check(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(parsed.file, "check")
+	file, err := a.resolveSource(parsed)
+	if err != nil {
+		return err
+	}
+	result, err := a.analyze(file, "check")
 	if err != nil {
 		return err
 	}
@@ -159,7 +199,11 @@ func (a *app) build(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(parsed.file, "build")
+	file, err := a.resolveSource(parsed)
+	if err != nil {
+		return err
+	}
+	result, err := a.analyze(file, "build")
 	if err != nil {
 		return err
 	}
@@ -200,7 +244,11 @@ func (a *app) run(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(parsed.file, "build")
+	file, err := a.resolveSource(parsed)
+	if err != nil {
+		return err
+	}
+	result, err := a.analyze(file, "build")
 	if err != nil {
 		return err
 	}
@@ -239,14 +287,22 @@ func (a *app) run(args []string) error {
 
 // dump 输出前端事实或 NIR，只写 JSON。
 func (a *app) dump(args []string) error {
-	if len(args) != 2 {
+	if len(args) < 2 {
 		return diagnostic.New(diagnostic.Usage, "cli.missing-argument", "dump 需要一份内容和一份源文件：dump facts <file.ts> 或 dump nir <file.ts>")
 	}
-	what, file := args[0], args[1]
+	what := args[0]
 	switch what {
 	case "facts", "nir":
 	default:
 		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts 或 nir，收到 %q", what)
+	}
+	parsed, err := parseSourceArgs("dump", args[1:], false, false)
+	if err != nil {
+		return err
+	}
+	file, err := a.resolveSource(parsed)
+	if err != nil {
+		return err
 	}
 	result, err := a.analyze(file, what)
 	if err != nil {

@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "04.07",
+  "currentImplementationNode": "05.01",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -544,7 +544,7 @@
       "dependsOn": [
         "04"
       ],
-      "status": "planned",
+      "status": "active",
       "plannedNote": "docs/notes/05-modules.md",
       "goal": "静态依赖图、命名导入导出和类型导入",
       "gateSubnode": "05.08",
@@ -556,9 +556,13 @@
             "04.07"
           ],
           "planSection": "PLAN.md#task-05-01",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/project-paths.md",
+            "docs/validation/05-01-paths.md",
+            "compiler/project/project.go"
+          ]
         },
         {
           "id": "05.02",

@@ -334,3 +334,35 @@ func TestFrontendEnvironmentErrorIsNotSourceError(t *testing.T) {
 		t.Fatalf("环境缺失应为 4，实际 %d", code)
 	}
 }
+
+func TestResolveSourceUsesProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "子 目录"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "子 目录", "入口.ts")
+	if err := os.WriteFile(entry, []byte("console.log(1);\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{}
+	got, err := a.resolveSource(sourceArgs{root: root, file: "子 目录/入口.ts"})
+	if err != nil {
+		t.Fatalf("解析项目根失败：%v", err)
+	}
+	if got != want {
+		t.Fatalf("入口为 %q，期望 %q", got, want)
+	}
+}
+
+func TestResolveSourceRejectsMissing(t *testing.T) {
+	a := &app{}
+	_, err := a.resolveSource(sourceArgs{root: t.TempDir(), file: "缺失.ts"})
+	var d *diagnostic.Diagnostic
+	if !errors.As(err, &d) || d.Code != "project.missing" {
+		t.Fatalf("错误为 %v，期望 project.missing", err)
+	}
+}

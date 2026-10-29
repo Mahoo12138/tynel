@@ -425,7 +425,7 @@
       "dependsOn": [
         "03"
       ],
-      "status": "active",
+      "status": "completed",
       "plannedNote": "docs/notes/04-loops.md",
       "goal": "初始化局部变量、赋值、while、递归和退出路径",
       "gateSubnode": "04.07",
@@ -527,7 +527,11 @@
           "status": "verified",
           "implementationCommits": [],
           "evidence": [
-            "docs/design/state-and-loops.md"
+            "docs/design/state-and-loops.md",
+            "docs/notes/04-loops.md",
+            "docs/validation/04-loops.md",
+            "examples/collatz.ts",
+            "examples/collatz-mod.ts"
           ]
         }
       ]

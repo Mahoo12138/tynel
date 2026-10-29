@@ -81,7 +81,7 @@ func main() {
 	}
 
 	if *facts {
-		out, err := dumpFacts(snapshot)
+		out, err := dumpFacts(snapshot, deps)
 		if err != nil {
 			report(err)
 		}
@@ -362,8 +362,8 @@ func writeJSON(v any) {
 //
 // 输出的是解码后的事实，不是适配层的原始字节：解码会拒绝未知字段，校验会
 // 检查 ID、引用和调用是否自洽，能通过这两关的数据才值得给别人看。
-func dumpFacts(snapshot *source.Snapshot) ([]byte, error) {
-	decoded, err := factsOf(snapshot)
+func dumpFacts(snapshot *source.Snapshot, deps []*source.Snapshot) ([]byte, error) {
+	decoded, err := factsOfFiles(snapshot, deps)
 	if err != nil {
 		return nil, err
 	}

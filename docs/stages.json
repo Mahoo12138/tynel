@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "05.03",
+  "currentImplementationNode": "05.04",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -603,9 +603,14 @@
             "05.02"
           ],
           "planSection": "PLAN.md#task-05-04",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/module-bindings.md",
+            "docs/validation/05-04-bindings.md",
+            "compiler/modules/modules.go",
+            "compiler/frontend/facts.go"
+          ]
         },
         {
           "id": "05.05",

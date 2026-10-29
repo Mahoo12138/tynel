@@ -467,6 +467,28 @@ GRAPHJSON
     fail "类型别名当值应退出 1 并含 TS2693，实际 $code：$out"
   fi
 
+  "$CLI" dump modules --root "$ROOT/compiler/graph/testdata/modules" main.ts >"$cli_tmp/modules.json" 2>"$cli_tmp/err"; code=$?
+  if [[ $code -eq 0 ]] && python3 - "$cli_tmp/modules.json" <<'MODULESJSON'
+import json, sys
+data = json.load(open(sys.argv[1]))
+main = next(item for item in data["modules"] if item["path"].endswith("/main.ts"))
+assert main["imports"]["h"].endswith("/a.ts#helper"), main
+assert main["imports"]["h2"].endswith("/b.ts#helper"), main
+assert main["imports"]["base"].endswith("/a.ts#base"), main
+MODULESJSON
+  then
+    pass "dump modules 区分同名导出与导入重命名"
+  else
+    fail "dump modules 输出不符合预期（退出 $code）"
+  fi
+
+  out=$("$CLI" dump modules --root "$ROOT/compiler/graph/testdata/modules" missing.ts 2>&1); code=$?
+  if [[ $code -eq 1 ]] && print -- "$out" | grep -q 'module.missing-export'; then
+    pass "缺失导出按源码错误拒绝"
+  else
+    fail "缺失导出应退出 1，实际 $code：$out"
+  fi
+
   if "$CLI" build "$ROOT/bridge/tsgo/testdata/add.ts" -o "$cli_tmp/app" >/dev/null 2>&1 && [[ "$("$cli_tmp/app")" == "42" ]]; then
     pass "一条 build 生成原生 42"
   else

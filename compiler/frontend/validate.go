@@ -67,6 +67,20 @@ func (f *Facts) Validate() error {
 		byID[d.ID] = d
 	}
 
+	for _, imp := range f.Imports {
+		if imp.Local == "" || imp.Imported == "" || imp.Module == "" || imp.Start < 0 || imp.Length <= 0 {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-import", "导入绑定 %q 的字段不完整", imp.Local)
+		}
+	}
+	for _, exp := range f.Exports {
+		if exp.Name == "" || exp.Start < 0 || exp.Length <= 0 {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-export", "导出 %q 的名字或位置不合法", exp.Name)
+		}
+		if !exp.TypeOnly && exp.ID <= 0 {
+			return diagnostic.New(diagnostic.Internal, "facts.bad-export", "导出 %q 没有声明 ID", exp.Name)
+		}
+	}
+
 	for _, alias := range f.Aliases {
 		if alias.Name == "" || alias.Start < 0 || alias.Length <= 0 {
 			return diagnostic.New(diagnostic.Internal, "facts.bad-alias", "类型别名 %q 的名字或位置不合法", alias.Name)

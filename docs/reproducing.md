@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue、04.05 的直接与相互递归、04.06 的状态与控制组合，04.07 的 Collatz 真实源码实验，05.01 的项目根与路径解析，05.02 的依赖图与源码快照，以及 05.03 的类型别名与纯类型导入；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue、04.05 的直接与相互递归、04.06 的状态与控制组合，04.07 的 Collatz 真实源码实验，05.01 的项目根与路径解析，05.02 的依赖图与源码快照，05.03 的类型别名与纯类型导入，以及 05.04 的跨模块名称绑定；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -210,6 +210,23 @@ cd /tmp
 ```
 
 类型空间与值空间、允许的别名类别见[类型别名与纯类型导入](reference/type-aliases.md)，验收记录见[05.03 验收记录](validation/05-03-aliases.md)。
+
+## 跨模块名称绑定
+
+05.04 的夹具在 `compiler/graph/testdata/modules`：
+
+```zsh
+# 两个模块都导出 helper，导入重命名后分别绑定到 a.ts / b.ts。
+./bin/tynel dump modules --root compiler/graph/testdata/modules main.ts
+
+# 缺导出：预期 module.missing-export，退出 1。
+./bin/tynel dump modules --root compiler/graph/testdata/modules missing.ts
+
+# 函数读取模块级 const：预期 module.captured-variable，退出 1。
+./bin/tynel dump modules --root compiler/graph/testdata/modules capture-main.ts
+```
+
+身份表示和拒绝条件见[跨模块名称绑定](reference/module-bindings.md)，验收记录见[05.04 验收记录](validation/05-04-bindings.md)。
 
 ## 前置条件
 

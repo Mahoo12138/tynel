@@ -60,4 +60,6 @@ MVP 的交付物是编译器本身：通过 `tynel build input.ts -o out/program
 
 05.03 已完成：类型别名与纯类型导入。`type Amount = number` / `boolean` 只活在类型空间，不产生运行时值；`import type` 让两个文件共享同一别名，`main.ts` 输出 `42`，NIR 里没有导入动作。把别名改成 `string` 后使用方报 `TS2322`；联合、接口、`any`、类型名当值、纯类型导入被调用和循环别名都按预期拒绝。规则见[类型别名与纯类型导入](docs/reference/type-aliases.md)，验收记录见[05.03 验收记录](docs/validation/05-03-aliases.md)。
 
-下一步进入 05.04：绑定导入导出和跨模块名称。节点 01、02、03、04 的全部子节点与 05.01 至 05.03 已通过正常、错误和边界验收，05 的其余子节点与 06 仍为计划状态。
+05.04 已完成：跨模块名称绑定。`tynel dump modules` 用模块绝对路径加模块内声明 ID 建立符号表；`a.ts` 和 `b.ts` 都导出 `helper`，`main.ts` 的 `h`、`h2` 分别绑定到两个模块，`base` 绑定到 `a.ts` 的顶层常量。缺导出报 `module.missing-export`，函数读取模块级 `const` 报 `module.captured-variable`。规则见[跨模块名称绑定](docs/reference/module-bindings.md)，验收记录见[05.04 验收记录](docs/validation/05-04-bindings.md)。
+
+下一步进入 05.05：规定并实现模块初始化顺序。节点 01、02、03、04 的全部子节点与 05.01 至 05.04 已通过正常、错误和边界验收，05 的其余子节点与 06 仍为计划状态。

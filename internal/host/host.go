@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+	"github.com/Mahoo12138/tynel/compiler/frontend"
 	"github.com/Mahoo12138/tynel/compiler/pipeline"
 	"github.com/Mahoo12138/tynel/internal/toolchain"
 )
@@ -127,7 +128,29 @@ func (h *Host) Imports(file string, runner toolchain.Runner) ([]Import, error) {
 	return imports, nil
 }
 
-// Analyze 让宿主检查一个文件，返回协议结果。want 决定附带事实还是 NIR。
+// Facts 让宿主输出一个文件的事实，依赖一起放进程序用于跨模块解析。
+func (h *Host) Facts(file string, deps []string, runner toolchain.Runner) (*frontend.Facts, error) {
+	args := []string{"-facts", file}
+	args = append(args, deps...)
+	out, err := runner.Run(h.Path, args...)
+	if err != nil {
+		return nil, diagnostic.New(diagnostic.Environment, "host.start-failed", "无法启动前端宿主 %s", h.Path).WithDetail(err.Error())
+	}
+	if out.ExitCode != 0 {
+		d := diagnostic.New(diagnostic.Environment, "host.facts-failed", "前端宿主读取事实失败（退出状态 %d）", out.ExitCode)
+		if detail := strings.TrimSpace(out.Stderr); detail != "" {
+			d = d.WithDetail(detail)
+		}
+		return nil, d
+	}
+	facts, err := frontend.Decode([]byte(out.Stdout))
+	if err != nil {
+		return nil, err
+	}
+	return facts, nil
+}
+
+// Analyze 让宿主检查一个文件，返回协议结果。want 决定附带事实还是 NIR。// Analyze 让宿主检查一个文件，返回协议结果。want 决定附带事实还是 NIR。
 func (h *Host) Analyze(file, want string, runner toolchain.Runner) (*pipeline.Result, error) {
 	return h.AnalyzeFiles(file, nil, want, runner)
 }

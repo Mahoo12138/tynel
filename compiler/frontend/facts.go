@@ -83,9 +83,31 @@ type Node struct {
 	Children []Node `json:"children,omitempty"`
 }
 
-// Declaration 是一个声明。ID 在事实内唯一，同名声明各有各的 ID。
+// Import 是一条导入绑定。Module 是解析后的绝对文件名；Imported 是目标
+// 模块里的导出名，Local 是本文件里的绑定名。
+type Import struct {
+	Local    string `json:"local"`
+	Imported string `json:"imported"`
+	Module   string `json:"module"`
+	TypeOnly bool   `json:"typeOnly,omitempty"`
+	Start    int    `json:"start"`
+	Length   int    `json:"length"`
+}
+
+// Export 是一条命名导出。ID 是模块内声明的 ID；TypeOnly 表示只导出类型。
+type Export struct {
+	Name     string `json:"name"`
+	ID       int    `json:"id"`
+	TypeOnly bool   `json:"typeOnly,omitempty"`
+	Start    int    `json:"start"`
+	Length   int    `json:"length"`
+}
+
+// Declaration 是一个声明。ID 在模块内唯一；跨模块身份是 Module 加 ID。
 type Declaration struct {
 	ID         int      `json:"id"`
+	Module     string   `json:"module,omitempty"`
+	Exported   bool     `json:"exported,omitempty"`
 	Kind       DeclKind `json:"kind"`
 	Name       string   `json:"name"`
 	Start      int      `json:"start"`
@@ -108,19 +130,23 @@ type Alias struct {
 
 // Reference 是一次名称引用。Target 为 0 表示没有解析到本文件内的声明。
 type Reference struct {
-	Name   string `json:"name"`
-	Start  int    `json:"start"`
-	Length int    `json:"length"`
-	Target int    `json:"target"`
+	Name         string `json:"name"`
+	Start        int    `json:"start"`
+	Length       int    `json:"length"`
+	Target       int    `json:"target"`
+	TargetModule string `json:"targetModule,omitempty"`
+	TargetName   string `json:"targetName,omitempty"`
 }
 
 // Call 是一次调用。Callee 为 0 表示被调用者不在本文件内。
 type Call struct {
-	Start     int    `json:"start"`
-	Length    int    `json:"length"`
-	Callee    int    `json:"callee"`
-	Arguments []Type `json:"arguments"`
-	Result    Type   `json:"result"`
+	Start        int    `json:"start"`
+	Length       int    `json:"length"`
+	Callee       int    `json:"callee"`
+	CalleeModule string `json:"calleeModule,omitempty"`
+	CalleeName   string `json:"calleeName,omitempty"`
+	Arguments    []Type `json:"arguments"`
+	Result       Type   `json:"result"`
 }
 
 // Expression 是一个表达式及其类型。
@@ -137,6 +163,9 @@ type Facts struct {
 	Session       string        `json:"session"`
 	File          string        `json:"file"`
 	Module        *Node         `json:"module,omitempty"`
+	ModulePath    string        `json:"modulePath,omitempty"`
+	Imports       []Import      `json:"imports,omitempty"`
+	Exports       []Export      `json:"exports,omitempty"`
 	Declarations  []Declaration `json:"declarations"`
 	References    []Reference   `json:"references"`
 	Calls         []Call        `json:"calls"`
@@ -184,6 +213,9 @@ func Combine(a, b *Facts) (*Facts, error) {
 		SchemaVersion: a.SchemaVersion,
 		Session:       a.Session,
 		File:          a.File,
+		ModulePath:    a.ModulePath,
+		Imports:       append(append([]Import{}, a.Imports...), b.Imports...),
+		Exports:       append(append([]Export{}, a.Exports...), b.Exports...),
 		Declarations:  append(append([]Declaration{}, a.Declarations...), b.Declarations...),
 		References:    append(append([]Reference{}, a.References...), b.References...),
 		Calls:         append(append([]Call{}, a.Calls...), b.Calls...),

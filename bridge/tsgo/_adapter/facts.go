@@ -15,6 +15,7 @@ import (
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/checker"
+	"github.com/microsoft/typescript-go/internal/compiler"
 	"github.com/microsoft/typescript-go/internal/scanner"
 )
 
@@ -24,8 +25,27 @@ type factType struct {
 	Kind string `json:"kind"`
 }
 
+type factImport struct {
+	Local    string `json:"local"`
+	Imported string `json:"imported"`
+	Module   string `json:"module"`
+	TypeOnly bool   `json:"typeOnly,omitempty"`
+	Start    int    `json:"start"`
+	Length   int    `json:"length"`
+}
+
+type factExport struct {
+	Name     string `json:"name"`
+	ID       int    `json:"id,omitempty"`
+	TypeOnly bool   `json:"typeOnly,omitempty"`
+	Start    int    `json:"start"`
+	Length   int    `json:"length"`
+}
+
 type factDeclaration struct {
 	ID         int       `json:"id"`
+	Module     string    `json:"module,omitempty"`
+	Exported   bool      `json:"exported,omitempty"`
 	Kind       string    `json:"kind"`
 	Name       string    `json:"name"`
 	Start      int       `json:"start"`
@@ -57,18 +77,22 @@ type factNode struct {
 }
 
 type factReference struct {
-	Name   string `json:"name"`
-	Start  int    `json:"start"`
-	Length int    `json:"length"`
-	Target int    `json:"target"`
+	Name         string `json:"name"`
+	Start        int    `json:"start"`
+	Length       int    `json:"length"`
+	Target       int    `json:"target"`
+	TargetModule string `json:"targetModule,omitempty"`
+	TargetName   string `json:"targetName,omitempty"`
 }
 
 type factCall struct {
-	Start     int        `json:"start"`
-	Length    int        `json:"length"`
-	Callee    int        `json:"callee"`
-	Arguments []factType `json:"arguments"`
-	Result    factType   `json:"result"`
+	Start        int        `json:"start"`
+	Length       int        `json:"length"`
+	Callee       int        `json:"callee"`
+	CalleeModule string     `json:"calleeModule,omitempty"`
+	CalleeName   string     `json:"calleeName,omitempty"`
+	Arguments    []factType `json:"arguments"`
+	Result       factType   `json:"result"`
 }
 
 type factAlias struct {
@@ -89,7 +113,10 @@ type factsPayload struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	Session       string            `json:"session"`
 	File          string            `json:"file"`
+	ModulePath    string            `json:"modulePath,omitempty"`
 	Module        *factNode         `json:"module,omitempty"`
+	Imports       []factImport      `json:"imports,omitempty"`
+	Exports       []factExport      `json:"exports,omitempty"`
 	Declarations  []factDeclaration `json:"declarations"`
 	References    []factReference   `json:"references"`
 	Calls         []factCall        `json:"calls"`
@@ -114,6 +141,7 @@ func (s *Session) Facts() ([]byte, error) {
 
 	b := &factBuilder{
 		file:          s.file,
+		program:       s.program,
 		checker:       chk,
 		ids:           make(map[*ast.Symbol]int),
 		declNameNodes: make(map[*ast.Node]bool),
@@ -121,6 +149,7 @@ func (s *Session) Facts() ([]byte, error) {
 			SchemaVersion: 1,
 			Session:       s.id,
 			File:          s.file.FileName(),
+			ModulePath:    s.file.FileName(),
 		},
 	}
 	b.collect(s.file)
@@ -133,6 +162,7 @@ func (s *Session) Facts() ([]byte, error) {
 type factBuilder struct {
 	err           error
 	file          *ast.SourceFile
+	program       *compiler.Program
 	checker       *checker.Checker
 	ids           map[*ast.Symbol]int
 	declNameNodes map[*ast.Node]bool
@@ -197,12 +227,13 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 	for _, stmt := range file.Statements.Nodes {
 		switch {
 		case ast.IsFunctionDeclaration(stmt):
-			queue = append(queue, b.declareFunction(stmt))
+			queue = append(queue, b.declareFunction(stmt, ast.HasSyntacticModifier(stmt, ast.ModifierFlagsExport)))
 		case ast.IsVariableStatement(stmt):
 			list := stmt.AsVariableStatement().DeclarationList.AsVariableDeclarationList()
 			constDecl := list.Flags&ast.NodeFlagsConst != 0
+			exported := ast.HasSyntacticModifier(stmt, ast.ModifierFlagsExport)
 			for _, decl := range list.Declarations.Nodes {
-				item := b.declareVariable(decl)
+				item := b.declareVariable(decl, exported)
 				queue = append(queue, item)
 				if constDecl {
 					// 顶层 const 在模块体里占一个位置，降低阶段按顺序求值。
@@ -221,6 +252,11 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 						Decl:   b.payload.Declarations[item.index].ID,
 					})
 				}
+			}
+		case ast.IsImportDeclaration(stmt):
+			b.declareImport(stmt)
+			if node := b.bodyNode(stmt); node != nil {
+				module.Children = append(module.Children, *node)
 			}
 		case ast.IsTypeAliasDeclaration(stmt), ast.IsInterfaceDeclaration(stmt):
 			b.declareAlias(stmt)
@@ -241,6 +277,7 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 		if node := b.bodyNode(item.node); node != nil {
 			module.Children[item.index] = *node
 		}
+		b.walk(item.node)
 	}
 	b.payload.Module = module
 	for _, item := range queue {
@@ -249,6 +286,47 @@ func (b *factBuilder) collect(file *ast.SourceFile) {
 		} else {
 			b.fillVariable(item)
 		}
+	}
+}
+
+// declareImport 记录命名导入的本地名、目标导出名和解析后的模块。默认导入和
+// 命名空间导入暂不进入事实；能力检查会按导入节点拒绝不支持的形状。
+func (b *factBuilder) declareImport(node *ast.Node) {
+	decl := node.AsImportDeclaration()
+	clause := decl.ImportClause
+	if clause == nil || clause.AsImportClause().NamedBindings == nil {
+		return
+	}
+	named := clause.AsImportClause().NamedBindings
+	if named.Kind != ast.KindNamedImports {
+		return
+	}
+	module := ""
+	if decl.ModuleSpecifier != nil {
+		if resolved := b.program.GetResolvedModuleFromModuleSpecifier(b.file, decl.ModuleSpecifier); resolved != nil {
+			module = resolved.ResolvedFileName
+		}
+		if module == "" && ast.IsStringLiteralLike(decl.ModuleSpecifier) {
+			module = decl.ModuleSpecifier.AsStringLiteral().Text
+		}
+	}
+	for _, element := range named.AsNamedImports().Elements.Nodes {
+		if !ast.IsImportSpecifier(element) {
+			continue
+		}
+		local := element.Name().Text()
+		imported := local
+		if property := element.PropertyName(); property != nil {
+			imported = property.Text()
+		}
+		b.payload.Imports = append(b.payload.Imports, factImport{
+			Local:    local,
+			Imported: imported,
+			Module:   module,
+			TypeOnly: clause.IsTypeOnly() || element.IsTypeOnly(),
+			Start:    b.startOf(element),
+			Length:   element.End() - b.startOf(element),
+		})
 	}
 }
 
@@ -275,18 +353,28 @@ func (b *factBuilder) declareAlias(node *ast.Node) {
 		}
 	}
 	b.payload.Aliases = append(b.payload.Aliases, alias)
+	if ast.HasSyntacticModifier(node, ast.ModifierFlagsExport) {
+		b.payload.Exports = append(b.payload.Exports, factExport{
+			Name:     alias.Name,
+			TypeOnly: true,
+			Start:    alias.Start,
+			Length:   alias.Length,
+		})
+	}
 }
 
 // declareFunction 只登记签名与参数，不碰函数体。
-func (b *factBuilder) declareFunction(node *ast.Node) pending {
+func (b *factBuilder) declareFunction(node *ast.Node, exported bool) pending {
 	fn := node.AsFunctionDeclaration()
 	name := fn.Name()
 	decl := factDeclaration{
-		ID:     b.declare(b.checker.GetSymbolAtLocation(name)),
-		Kind:   "function",
-		Name:   name.Text(),
-		Start:  b.startOf(node),
-		Length: node.End() - b.startOf(node),
+		ID:       b.declare(b.checker.GetSymbolAtLocation(name)),
+		Module:   b.file.FileName(),
+		Exported: exported,
+		Kind:     "function",
+		Name:     name.Text(),
+		Start:    b.startOf(node),
+		Length:   node.End() - b.startOf(node),
 	}
 	b.declNameNodes[name] = true
 
@@ -307,6 +395,7 @@ func (b *factBuilder) declareFunction(node *ast.Node) pending {
 		typ := b.typeOf(b.checker.GetTypeAtLocation(paramName))
 		params = append(params, factDeclaration{
 			ID:     id,
+			Module: b.file.FileName(),
 			Kind:   "parameter",
 			Name:   paramName.Text(),
 			Start:  b.startOf(param),
@@ -318,6 +407,14 @@ func (b *factBuilder) declareFunction(node *ast.Node) pending {
 
 	b.payload.Declarations = append(b.payload.Declarations, decl)
 	b.payload.Declarations = append(b.payload.Declarations, params...)
+	if exported {
+		b.payload.Exports = append(b.payload.Exports, factExport{
+			Name:   decl.Name,
+			ID:     decl.ID,
+			Start:  decl.Start,
+			Length: decl.Length,
+		})
+	}
 	return pending{index: len(b.payload.Declarations) - len(params) - 1, node: node, isFunc: true}
 }
 
@@ -353,6 +450,7 @@ func (b *factBuilder) declareLocals(node *ast.Node) {
 			}
 			b.payload.Declarations = append(b.payload.Declarations, factDeclaration{
 				ID:      id,
+				Module:  b.file.FileName(),
 				Kind:    kind,
 				Name:    name.Text(),
 				Start:   b.startOf(node),
@@ -369,7 +467,7 @@ func (b *factBuilder) declareLocals(node *ast.Node) {
 	})
 }
 
-func (b *factBuilder) declareVariable(node *ast.Node) pending {
+func (b *factBuilder) declareVariable(node *ast.Node, exported bool) pending {
 	decl := node.AsVariableDeclaration()
 	name := decl.Name()
 	typ := b.typeOf(b.checker.GetTypeAtLocation(name))
@@ -384,15 +482,25 @@ func (b *factBuilder) declareVariable(node *ast.Node) pending {
 		mutable = true
 	}
 	b.payload.Declarations = append(b.payload.Declarations, factDeclaration{
-		ID:      b.declare(b.checker.GetSymbolAtLocation(name)),
-		Kind:    kind,
-		Name:    name.Text(),
-		Start:   b.startOf(node),
-		Length:  node.End() - b.startOf(node),
-		Type:    &typ,
-		Mutable: mutable,
+		ID:       b.declare(b.checker.GetSymbolAtLocation(name)),
+		Module:   b.file.FileName(),
+		Exported: exported,
+		Kind:     kind,
+		Name:     name.Text(),
+		Start:    b.startOf(node),
+		Length:   node.End() - b.startOf(node),
+		Type:     &typ,
+		Mutable:  mutable,
 	})
 	b.declNameNodes[name] = true
+	if exported {
+		b.payload.Exports = append(b.payload.Exports, factExport{
+			Name:   name.Text(),
+			ID:     b.payload.Declarations[len(b.payload.Declarations)-1].ID,
+			Start:  b.startOf(node),
+			Length: node.End() - b.startOf(node),
+		})
+	}
 	return pending{index: len(b.payload.Declarations) - 1, node: node, isFunc: false}
 }
 
@@ -433,25 +541,55 @@ func (b *factBuilder) walk(node *ast.Node) {
 }
 
 func (b *factBuilder) reference(node *ast.Node) {
+	sym := b.checker.GetSymbolAtLocation(node)
+	module, name := b.target(sym)
 	b.payload.References = append(b.payload.References, factReference{
-		Name:   node.Text(),
-		Start:  b.startOf(node),
-		Length: node.End() - b.startOf(node),
-		Target: b.lookup(b.checker.GetSymbolAtLocation(node)),
+		Name:         node.Text(),
+		Start:        b.startOf(node),
+		Length:       node.End() - b.startOf(node),
+		Target:       b.lookup(sym),
+		TargetModule: module,
+		TargetName:   name,
 	})
+}
+
+// target 返回符号最终声明的模块和名字。导入别名先解开，才能把 h 指到
+// a.ts 里的 helper，而不是导入说明符本身。
+func (b *factBuilder) target(sym *ast.Symbol) (module, name string) {
+	if sym == nil {
+		return "", ""
+	}
+	if sym.Flags&ast.SymbolFlagsAlias != 0 {
+		sym = b.checker.GetAliasedSymbol(sym)
+	}
+	for _, decl := range sym.Declarations {
+		file := ast.GetSourceFileOfNode(decl)
+		if file == nil {
+			continue
+		}
+		if declName := decl.Name(); declName != nil {
+			return file.FileName(), declName.Text()
+		}
+	}
+	return "", ""
 }
 
 func (b *factBuilder) call(node *ast.Node) {
 	call := node.AsCallExpression()
 	callee := 0
+	module, name := "", ""
 	if ast.IsIdentifier(call.Expression) {
-		callee = b.lookup(b.checker.GetSymbolAtLocation(call.Expression))
+		sym := b.checker.GetSymbolAtLocation(call.Expression)
+		callee = b.lookup(sym)
+		module, name = b.target(sym)
 	}
 	item := factCall{
-		Start:  b.startOf(node),
-		Length: node.End() - b.startOf(node),
-		Callee: callee,
-		Result: b.typeOf(b.checker.GetTypeAtLocation(node)),
+		Start:        b.startOf(node),
+		Length:       node.End() - b.startOf(node),
+		Callee:       callee,
+		CalleeModule: module,
+		CalleeName:   name,
+		Result:       b.typeOf(b.checker.GetTypeAtLocation(node)),
 	}
 	if call.Arguments != nil {
 		for _, arg := range call.Arguments.Nodes {

@@ -16,7 +16,7 @@ const usageText = `tynel 是 TypeScript 到原生二进制的编译器。
   check <file.ts> [--root <目录>] [--json]  检查源码与原生子集，验证 NIR，不生成机器码
   build <file.ts> -o <路径> [--root <目录>] 编译成原生程序，不运行
   run <file.ts> [--root <目录>]             编译并运行本次产物
-  dump facts|nir|graph <file.ts> [--root <目录>]  输出前端事实、NIR 或依赖图（JSON）
+  dump facts|nir|graph|modules <file.ts> [--root <目录>]  输出前端事实、NIR、依赖图或模块符号表（JSON）
   version                       显示版本、目标平台和锁定的工具链身份
   help [命令]                   显示总体帮助或某个命令的说明
   toolchain                     显示锁定工具链和各工具的实际路径（开发命令）
@@ -75,9 +75,10 @@ var topicHelp = map[string]string{
 	"dump": `tynel dump facts <file.ts>
 tynel dump nir <file.ts>
 tynel dump graph <file.ts>
+tynel dump modules <file.ts>
 
-输出前端事实、降低后的 NIR 或依赖图，只有 JSON，没有进度日志。源码有错时
-退出 1，超出原生子集时退出 3，两种情况都不输出 JSON。
+输出前端事实、降低后的 NIR、依赖图或模块符号表，只有 JSON，没有进度日志。
+源码有错时退出 1，超出原生子集时退出 3，两种情况都不输出 JSON。
 
 --root 指定项目根；入口按这个根解释。
 `,

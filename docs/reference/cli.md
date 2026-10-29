@@ -24,6 +24,7 @@
 | `tynel dump facts <file.ts> [--root <目录>]` | 输出前端事实 | JSON |
 | `tynel dump nir <file.ts> [--root <目录>]` | 输出降低后的 NIR | JSON |
 | `tynel dump graph <file.ts> [--root <目录>]` | 输出依赖图：文件身份、边、类型边标记 | JSON |
+| `tynel dump modules <file.ts> [--root <目录>]` | 输出模块符号表：导出和导入绑定 | JSON |
 
 ```zsh
 # 检查、编译、运行；示例在 examples/add.ts。
@@ -37,6 +38,7 @@
 ./bin/tynel dump facts examples/add.ts
 ./bin/tynel dump nir examples/add.ts
 ./bin/tynel dump graph examples/add.ts
+./bin/tynel dump modules examples/add.ts
 ```
 
 ## 开发命令

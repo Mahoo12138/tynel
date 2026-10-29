@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+	"github.com/Mahoo12138/tynel/compiler/frontend"
 	"github.com/Mahoo12138/tynel/compiler/graph"
+	"github.com/Mahoo12138/tynel/compiler/modules"
 	"github.com/Mahoo12138/tynel/compiler/nir"
 	"github.com/Mahoo12138/tynel/compiler/pipeline"
 	"github.com/Mahoo12138/tynel/compiler/project"
@@ -186,7 +188,37 @@ func (a *app) loadGraph(parsed sourceArgs) (*graph.Graph, error) {
 	return graph.Load(p, entry, hostScanner{host: front, runner: a.runner})
 }
 
-// analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
+// loadModules 为图里的每个文件取事实，再合成模块符号表。
+func (a *app) loadModules(parsed sourceArgs) (*modules.Table, error) {
+	g, err := a.loadGraph(parsed)
+	if err != nil {
+		return nil, err
+	}
+	if g == nil {
+		return nil, diagnostic.New(diagnostic.Internal, "modules.test-frontend", "假前端不能建立模块符号表")
+	}
+	front, err := host.Ensure(a.root, a.runner, a.stderr)
+	if err != nil {
+		return nil, err
+	}
+	facts := make([]*frontend.Facts, 0, len(g.Files))
+	for _, file := range g.Files {
+		deps := make([]string, 0, len(g.Files)-1)
+		for _, other := range g.Files {
+			if other.Abs != file.Abs {
+				deps = append(deps, other.Abs)
+			}
+		}
+		item, err := front.Facts(file.Abs, deps, a.runner)
+		if err != nil {
+			return nil, err
+		}
+		facts = append(facts, item)
+	}
+	return modules.Build(facts[0], facts[1:])
+}
+
+// analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。// analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
 func (a *app) analyze(file, want string, deps []string) (*pipeline.Result, error) {
 	if a.frontend != nil {
 		// 测试用：直接给出前端结果，不启动宿主进程。
@@ -361,13 +393,27 @@ func (a *app) dump(args []string) error {
 	}
 	what := args[0]
 	switch what {
-	case "facts", "nir", "graph":
+	case "facts", "nir", "graph", "modules":
 	default:
-		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts、nir 或 graph，收到 %q", what)
+		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts、nir、graph 或 modules，收到 %q", what)
 	}
 	parsed, err := parseSourceArgs("dump", args[1:], false, false)
 	if err != nil {
 		return err
+	}
+	if what == "modules" {
+		table, err := a.loadModules(parsed)
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(table.Report(), "", "  ")
+		if err != nil {
+			return diagnostic.New(diagnostic.Internal, "cli.encode-failed", "无法序列化模块符号表").WithDetail(err.Error())
+		}
+		if _, err := a.stdout.Write(append(data, '\n')); err != nil {
+			return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出模块符号表失败").WithDetail(err.Error())
+		}
+		return nil
 	}
 	if what == "graph" {
 		g, err := a.loadGraph(parsed)

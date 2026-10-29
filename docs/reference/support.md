@@ -25,7 +25,7 @@
 | 块内 `let` | 支持 | 必须带初始值；可读、可遮蔽，可变 `let` 可赋值 |
 | `type X = number` / `boolean` | 支持 | 非递归别名，只活在类型空间 |
 | `import type` | 支持 | 只带类型名字，不产生运行时值 |
-| 值导入 `import { x }` | 拒绝 | `cap.import-value`，留到 05.04 |
+| 值导入 `import { x }` | 部分 | 05.04 已建立符号表；运行值合并留到 05.06 |
 | 接口、联合、`any` 别名 | 拒绝 | `cap.interface` / `cap.bad-type` / `cap.any` |
 | 模块级 `let` | 拒绝 | `cap.module-let`，模块体只接受 `const` |
 | 局部 `var` | 拒绝 | `cap.unsupported-syntax` |
@@ -79,10 +79,11 @@
 | `tynel dump facts` | 支持 | 查看前端事实 |
 | `tynel dump nir` | 支持 | 导出通过验证的 NIR |
 | `tynel dump graph` | 支持 | 输出文件图、边和类型边标记 |
+| `tynel dump modules` | 支持 | 输出命名导出与导入绑定 |
 | `tynel build-ir` | 支持 | 从固定 NIR 回放 |
 | 项目根与路径解析 | 支持 | `--root` 指定根；显式 `.ts`、大小写精确、符号链接不越界 |
 | 依赖图与快照 | 支持 | 显式相对 `.ts`、类型边/值边、缺失目标与环拒绝 |
-| 多文件、`import` | 部分 | 纯类型导入可用；跨模块名称绑定和值导入留到 05.04 |
+| 多文件、`import` | 部分 | 纯类型导入可用；命名导入/导出已建符号表，运行合并留到 05.06 |
 | `windows/amd64` | 计划 | 首版只验证 `darwin/arm64` |
 
 ## 相关材料

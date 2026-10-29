@@ -1,6 +1,6 @@
 # 复现与工具准备
 
-本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环，以及 04.04 的 break / continue；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
+本页记录从仓库取得代码、准备隔离工具链并运行实验的步骤。当前覆盖 01.01 的工具链准备、01.02 的构建与测试入口、01.05 的 bridge、02.01 的前端源码准备、02.02 的源码快照、02.03 的声明事实、02.04 的能力检查、02.05 的降低、02.06 的 void 与输出、02.07 的主命令行、02.09 的真实源码实验、03.08 的选择实验、04.01 的局部 let、04.02 的简单赋值、04.03 的 while 循环、04.04 的 break / continue，以及 04.05 的直接与相互递归；后续节点在同一页追加各自的实验命令。已经发布过的步骤按标签复测，不随最新代码改写。
 
 ## 现在能做什么
 
@@ -93,6 +93,23 @@ shasum -a 256 out/choices out/choices-replay
 
 跳转图见[循环跳转](reference/jumps.md)，验收记录见[04.04 验收记录](validation/04-04-jumps.md)。
 
+## 直接递归与相互递归
+
+04.05 的递归用例覆盖自调用、前向声明和调用层局部值：
+
+```zsh
+# 阶乘：预期 1、1、120、5040。
+./bin/tynel run tests/source/testdata/recursion-fact.ts
+
+# 相互递归：预期 true、true、false。
+./bin/tynel run tests/source/testdata/recursion-mutual.ts
+
+# 每层局部值独立：预期 10。
+./bin/tynel run tests/source/testdata/recursion-local.ts
+```
+
+`tests/native` 里的 `TestRecursionTerminates` 用 5 秒超时运行递归阶乘；`TestUnboundedRecursionBuildsWithoutRunning` 只构建无终止递归，确认编译器不在编译期执行它。规则见[直接递归与调用层](reference/recursion.md)。
+
 ## 前置条件
 
 当前开发与验收基线是一台 Mac mini（Mac16,10，Apple M4，10 核，24 GB 内存，macOS 26.6.2）。换机器时，下列条件满足即可复现，机型本身不是契约。
@@ -159,7 +176,7 @@ cd tynel
 # 其中 tests/native 会真的编译并运行 NIR 夹具，因此需要先构建 bridge。
 ./tools/test
 
-# 只跑源码到原生的回归集合：92 个用例，其中 40 个程序会真的编译并运行。
+# 只跑源码到原生的回归集合：98 个用例，其中 43 个程序会真的编译并运行。
 ./.work/toolchain/go1.27.3-sdk-darwin-arm64/bin/go test -count=1 -v ./tests/source
 ```
 

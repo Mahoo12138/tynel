@@ -355,6 +355,25 @@ func TestVerifyJumps(t *testing.T) {
 	}
 }
 
+// TestVerifyMutualRecursion 覆盖前向递归调用：验证器先登记全部函数签名，
+// 再检查函数体，因此 even 可以调用后面声明的 odd。
+func TestVerifyMutualRecursion(t *testing.T) {
+	even := fn("even", TypeBool, []string{"n"}, ifStmt(
+		compare("===", param("n"), num(0)),
+		[]Stmt{ret(boolLit(true))},
+		[]Stmt{ret(call("odd", binary("-", param("n"), num(1))))},
+	))
+	odd := fn("odd", TypeBool, []string{"n"}, ifStmt(
+		compare("===", param("n"), num(0)),
+		[]Stmt{ret(boolLit(false))},
+		[]Stmt{ret(call("even", binary("-", param("n"), num(1))))},
+	))
+	m := module("main", mainWith(printStmt(call("even", num(4))), retVoid()), even, odd)
+	if err := Verify(m); err != nil {
+		t.Fatalf("相互递归模块应通过验证：%v", err)
+	}
+}
+
 func TestVerifyRejectsSemanticErrors(t *testing.T) {
 	ok := fn("main", TypeVoid, nil)
 	logFn := fn("log", TypeVoid, nil, printStmt(num(1)))

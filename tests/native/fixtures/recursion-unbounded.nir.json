@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "down",
+      "params": [{"name": "n", "type": "number"}],
+      "result": "number",
+      "body": [
+        {"op": "return", "value": {"op": "call", "function": "down", "args": [
+          {"op": "binary", "operator": "-",
+            "left": {"op": "param", "name": "n"},
+            "right": {"op": "number", "bits": "0x3ff0000000000000"}}
+        ]}}
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "print", "value": {"op": "call", "function": "down", "args": [
+          {"op": "number", "bits": "0x4008000000000000"}
+        ]}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

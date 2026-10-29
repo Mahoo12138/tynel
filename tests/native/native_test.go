@@ -113,6 +113,56 @@ func TestLoopTerminates(t *testing.T) {
 	}
 }
 
+// TestRecursionTerminates 用独立进程和超时运行递归阶乘，确认调用层正常返回。
+func TestRecursionTerminates(t *testing.T) {
+	root := repoRoot(t)
+	output := filepath.Join(t.TempDir(), "fact")
+	if _, err := build.Run(build.Options{
+		Root:   root,
+		Input:  filepath.Join(root, "tests", "native", "fixtures", "recursion.nir.json"),
+		Output: output,
+	}, toolchain.Exec{}); err != nil {
+		t.Fatalf("构建递归夹具失败：%v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, output)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatal("递归夹具在 5 秒内没有结束")
+	}
+	if err != nil {
+		t.Fatalf("运行递归夹具失败：%v\n%s", err, out)
+	}
+	if got := string(out); got != "120\n" {
+		t.Fatalf("递归夹具输出 %q，期望 %q", got, "120\n")
+	}
+}
+
+// TestUnboundedRecursionBuildsWithoutRunning 只构建没有终止条件的递归函数，
+// 不执行产物。编译器必须在有限时间内结束，不能尝试在编译期算出调用结果。
+func TestUnboundedRecursionBuildsWithoutRunning(t *testing.T) {
+	root := repoRoot(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := build.Run(build.Options{
+			Root:   root,
+			Input:  filepath.Join(root, "tests", "native", "fixtures", "recursion-unbounded.nir.json"),
+			Output: filepath.Join(t.TempDir(), "unbounded"),
+		}, toolchain.Exec{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("构建无终止递归失败：%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("编译器在 5 秒内没有完成构建；它不应在编译期执行递归")
+	}
+}
+
 // TestPrintedNumbersReadBack 把输出逐行读回成 binary64，再按位比较。
 //
 // 只比字符串不够：`-0` 与 `0` 是两行不同的文本，但格式化器完全可能把它们写成

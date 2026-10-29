@@ -88,6 +88,8 @@ deadlocals / escape / walk / SSA / obj / link
 
 注入本身只做四件事：读 NIR、建签名、建函数体、交给 `typecheck.Stmts`。真正的类型检查、逃逸分析、指令选择、寄存器分配和链接全部沿用 Go 原有流程。
 
+签名先于函数体建立：`inject` 第一遍为所有 NIR 函数调用 `ir.NewFunc` 并登记到 `funcs`，第二遍才构造函数体。自调用和相互递归因此能直接找到目标，不需要额外的占位声明。
+
 ## 内部节点怎么来的
 
 | NIR | Go 内部节点 |

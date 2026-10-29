@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "04.04",
+  "currentImplementationNode": "04.05",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -495,9 +495,12 @@
             "04.02"
           ],
           "planSection": "PLAN.md#task-04-05",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/recursion.md",
+            "docs/validation/04-05-recursion.md"
+          ]
         },
         {
           "id": "04.06",

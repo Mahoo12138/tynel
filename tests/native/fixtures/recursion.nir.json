@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "entry": "main",
+  "functions": [
+    {
+      "name": "fact",
+      "params": [{"name": "n", "type": "number"}],
+      "result": "number",
+      "body": [
+        {"op": "if",
+          "cond": {"op": "compare", "operator": "<=",
+            "left": {"op": "param", "name": "n"},
+            "right": {"op": "number", "bits": "0x3ff0000000000000"}},
+          "then": [{"op": "return", "value": {"op": "number", "bits": "0x3ff0000000000000"}}]},
+        {"op": "return", "value": {"op": "binary", "operator": "*",
+          "left": {"op": "param", "name": "n"},
+          "right": {"op": "call", "function": "fact", "args": [
+            {"op": "binary", "operator": "-",
+              "left": {"op": "param", "name": "n"},
+              "right": {"op": "number", "bits": "0x3ff0000000000000"}}
+          ]}}}
+      ]
+    },
+    {
+      "name": "main",
+      "params": null,
+      "result": "void",
+      "body": [
+        {"op": "print", "value": {"op": "call", "function": "fact", "args": [
+          {"op": "number", "bits": "0x4014000000000000"}
+        ]}},
+        {"op": "return"}
+      ]
+    }
+  ]
+}

@@ -33,14 +33,35 @@ import (
 // ErrSessionClosed 在会话关闭后继续查询时返回。
 var ErrSessionClosed = errors.New("tyneladapter: 会话已关闭")
 
+// Input 是一份参与程序的源文件。FileName 必须是绝对路径，Source 是调用方
+// 已经读好的字节；适配包不会再去磁盘读它。
+type Input struct {
+	FileName string
+	Source   []byte
+}
+
 // Options 是一次检查的全部输入。
 //
 // Source 是调用方已经读好的字节快照：Open 不再访问磁盘，因此检查期间即使
 // 原文件被改写，结果仍对应快照那一刻的内容。FileName 只作为身份和相对路径
 // 的基准，必须是与 Source 对应的绝对路径。
+//
+// Files 非空时，程序会同时载入这些文件，入口仍是 FileName。这样 tsgo 的模块
+// 解析能看到依赖，而不是只看到入口一个文件。
 type Options struct {
 	FileName string
 	Source   []byte
+	Files    []Input
+}
+
+// Import 是一条导入声明。Resolved 是 tsgo 模块解析给出的绝对文件名；
+// 依赖文件不在程序里时为空。TypeOnly 表示整条导入只用于类型空间。
+type Import struct {
+	Specifier string `json:"specifier"`
+	Start     int    `json:"start"`
+	Length    int    `json:"length"`
+	TypeOnly  bool   `json:"typeOnly"`
+	Resolved  string `json:"resolved,omitempty"`
 }
 
 // Diagnostic 是一条源级诊断。字段全是普通数据类型，不含任何上游指针。
@@ -78,15 +99,43 @@ func Open(opts Options) (*Session, error) {
 	if opts.FileName == "" {
 		return nil, errors.New("tyneladapter: FileName 不能为空")
 	}
-	if len(opts.Source) == 0 {
-		return nil, errors.New("tyneladapter: Source 不能为空")
-	}
 	name := tspath.NormalizeSlashes(opts.FileName)
 	if !tspath.IsRootedDiskPath(name) {
 		return nil, fmt.Errorf("tyneladapter: FileName 必须是绝对路径：%q", opts.FileName)
 	}
 
-	fs := bundled.WrapFS(vfstest.FromMap(map[string]any{name: string(opts.Source)}, true))
+	inputs := opts.Files
+	if len(inputs) == 0 {
+		inputs = []Input{{FileName: opts.FileName, Source: opts.Source}}
+	}
+	files := make(map[string]any, len(inputs))
+	names := make([]string, 0, len(inputs))
+	entryFound := false
+	for _, input := range inputs {
+		if input.FileName == "" {
+			return nil, errors.New("tyneladapter: 依赖文件名不能为空")
+		}
+		depName := tspath.NormalizeSlashes(input.FileName)
+		if !tspath.IsRootedDiskPath(depName) {
+			return nil, fmt.Errorf("tyneladapter: 依赖文件名必须是绝对路径：%q", input.FileName)
+		}
+		if len(input.Source) == 0 {
+			return nil, fmt.Errorf("tyneladapter: 源文件 %s 不能为空", depName)
+		}
+		if _, dup := files[depName]; dup {
+			return nil, fmt.Errorf("tyneladapter: 源文件 %s 重复", depName)
+		}
+		files[depName] = string(input.Source)
+		names = append(names, depName)
+		if depName == name {
+			entryFound = true
+		}
+	}
+	if !entryFound {
+		return nil, fmt.Errorf("tyneladapter: 程序没有入口文件 %s", name)
+	}
+
+	fs := bundled.WrapFS(vfstest.FromMap(files, true))
 	options := &core.CompilerOptions{
 		Target: core.ScriptTargetESNext,
 		Strict: core.TSTrue,
@@ -94,7 +143,7 @@ func Open(opts Options) (*Session, error) {
 	program := compiler.NewProgram(compiler.ProgramOptions{
 		Config: &tsoptions.ParsedCommandLine{
 			ParsedConfig: &core.ParsedOptions{
-				FileNames:       []string{name},
+				FileNames:       names,
 				CompilerOptions: options,
 			},
 		},
@@ -143,6 +192,72 @@ func (s *Session) Diagnostics() ([]Diagnostic, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// Imports 返回入口文件里的导入声明。它只读语法树，不按字符串搜索：
+// import、import type、import { type X } 和副作用导入都由 tsgo 的 AST 给出。
+// 依赖文件已经放进程序时，Resolved 使用 tsgo 的模块解析结果。
+func (s *Session) Imports() ([]Import, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrSessionClosed
+	}
+	var out []Import
+	var walk func(*ast.Node)
+	walk = func(node *ast.Node) {
+		if node == nil {
+			return
+		}
+		if node.Kind == ast.KindImportDeclaration {
+			decl := node.AsImportDeclaration()
+			if decl.ModuleSpecifier != nil && ast.IsStringLiteralLike(decl.ModuleSpecifier) {
+				literal := decl.ModuleSpecifier.AsStringLiteral()
+				resolved := ""
+				if m := s.program.GetResolvedModuleFromModuleSpecifier(s.file, decl.ModuleSpecifier); m != nil {
+					resolved = m.ResolvedFileName
+				}
+				out = append(out, Import{
+					Specifier: literal.Text,
+					Start:     decl.ModuleSpecifier.Pos(),
+					Length:    decl.ModuleSpecifier.End() - decl.ModuleSpecifier.Pos(),
+					TypeOnly:  importIsTypeOnly(decl.ImportClause),
+					Resolved:  resolved,
+				})
+			}
+		}
+		node.ForEachChild(func(child *ast.Node) bool {
+			walk(child)
+			return false
+		})
+	}
+	walk(s.file.AsNode())
+	return out, nil
+}
+
+// importIsTypeOnly 判断整条导入是否只用于类型空间。默认导入和命名空间导入
+// 都是值；命名导入要全部带 type 才算纯类型。
+func importIsTypeOnly(clause *ast.Node) bool {
+	if clause == nil {
+		return false
+	}
+	if clause.IsTypeOnly() {
+		return true
+	}
+	named := clause.AsImportClause().NamedBindings
+	if named == nil || named.Kind != ast.KindNamedImports {
+		return false
+	}
+	elements := named.AsNamedImports().Elements
+	if elements == nil || len(elements.Nodes) == 0 {
+		return false
+	}
+	for _, element := range elements.Nodes {
+		if !element.IsTypeOnly() {
+			return false
+		}
+	}
+	return true
 }
 
 // newSessionID 给每次检查一个短标识。事实带上它，把两份来自不同会话的事实

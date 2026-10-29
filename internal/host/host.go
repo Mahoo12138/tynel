@@ -93,6 +93,40 @@ func Ensure(root string, runner toolchain.Runner, progress io.Writer) (*Host, er
 	return &Host{Path: binary}, nil
 }
 
+// Import 是前端发现的一条导入声明。Resolved 是 tsgo 给出的绝对文件名，
+// 依赖文件没有进入程序时为空。
+type Import struct {
+	Specifier string `json:"specifier"`
+	Start     int    `json:"start"`
+	Length    int    `json:"length"`
+	TypeOnly  bool   `json:"typeOnly"`
+	Resolved  string `json:"resolved,omitempty"`
+}
+
+// Imports 让宿主用 tsgo 的语法树列出一个文件的导入声明。
+func (h *Host) Imports(file string, runner toolchain.Runner) ([]Import, error) {
+	out, err := runner.Run(h.Path, "-imports", file)
+	if err != nil {
+		return nil, diagnostic.New(diagnostic.Environment, "host.start-failed", "无法启动前端宿主 %s", h.Path).WithDetail(err.Error())
+	}
+	if out.ExitCode != 0 {
+		category := diagnostic.Environment
+		if out.ExitCode == diagnostic.ExitInternal {
+			category = diagnostic.Internal
+		}
+		d := diagnostic.New(category, "host.imports-failed", "前端宿主读取导入失败（退出状态 %d）", out.ExitCode)
+		if detail := strings.TrimSpace(out.Stderr); detail != "" {
+			d = d.WithDetail(detail)
+		}
+		return nil, d
+	}
+	var imports []Import
+	if err := json.Unmarshal([]byte(out.Stdout), &imports); err != nil {
+		return nil, diagnostic.New(diagnostic.Internal, "host.bad-imports", "前端宿主返回的导入列表无法解析").WithDetail(err.Error())
+	}
+	return imports, nil
+}
+
 // Analyze 让宿主检查一个文件，返回协议结果。want 决定附带事实还是 NIR。
 func (h *Host) Analyze(file, want string, runner toolchain.Runner) (*pipeline.Result, error) {
 	out, err := runner.Run(h.Path, "-pipeline", "-want="+want, file)

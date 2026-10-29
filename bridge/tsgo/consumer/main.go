@@ -38,6 +38,7 @@ func main() {
 	facts := flag.Bool("facts", false, "输出前端事实而不是诊断")
 	capabilityCheck := flag.Bool("capability", false, "检查程序是否落在原生子集内")
 	nirOut := flag.Bool("nir", false, "输出降低后的 NIR")
+	importsOut := flag.Bool("imports", false, "输出入口文件的导入声明")
 	pipelineOut := flag.Bool("pipeline", false, "输出主命令行使用的一次性结果")
 	want := flag.String("want", "check", "pipeline 附带的内容：check、build、facts 或 nir")
 	flag.Usage = func() {
@@ -75,6 +76,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "写出事实失败：%v\n", err)
 			os.Exit(diagnostic.ExitInternal)
 		}
+		return
+	}
+
+	if *importsOut {
+		runImports(snapshot)
 		return
 	}
 
@@ -249,6 +255,27 @@ func gate(snapshot *source.Snapshot) *frontend.Facts {
 		os.Exit(diagnostic.ExitCapability)
 	}
 	return facts
+}
+
+// runImports 输出入口文件的导入声明，供依赖图构建器使用。它只读语法树，
+// 不执行检查，也不尝试解析文件系统。
+func runImports(snapshot *source.Snapshot) {
+	session, err := tyneladapter.Open(tyneladapter.Options{
+		FileName: snapshot.Path(),
+		Source:   snapshot.Bytes(),
+	})
+	if err != nil {
+		report(diagnostic.New(diagnostic.Environment, "frontend.session", "无法建立检查会话").WithDetail(err.Error()))
+	}
+	imports, err := session.Imports()
+	closeErr := session.Close()
+	if err != nil {
+		report(diagnostic.New(diagnostic.Internal, "frontend.imports", "读取导入声明失败").WithDetail(err.Error()))
+	}
+	if closeErr != nil {
+		report(diagnostic.New(diagnostic.Internal, "frontend.close", "关闭会话失败").WithDetail(closeErr.Error()))
+	}
+	writeJSON(imports)
 }
 
 // factsOf 取事实并解码校验，供 -facts 与 -capability 共用。

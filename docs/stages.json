@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "05.01",
+  "currentImplementationNode": "05.02",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -571,9 +571,14 @@
             "05.01"
           ],
           "planSection": "PLAN.md#task-05-02",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/module-graph.md",
+            "docs/validation/05-02-graph.md",
+            "compiler/graph/graph.go",
+            "bridge/tsgo/_adapter/adapter.go"
+          ]
         },
         {
           "id": "05.03",

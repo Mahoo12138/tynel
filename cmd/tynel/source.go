@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
+	"github.com/Mahoo12138/tynel/compiler/graph"
 	"github.com/Mahoo12138/tynel/compiler/nir"
 	"github.com/Mahoo12138/tynel/compiler/pipeline"
 	"github.com/Mahoo12138/tynel/compiler/project"
@@ -131,6 +132,60 @@ func (a *app) resolveSource(parsed sourceArgs) (string, error) {
 	return file.Abs, nil
 }
 
+// hostScanner 把前端宿主的导入列表适配成依赖图扫描器。
+type hostScanner struct {
+	host   *host.Host
+	runner toolchain.Runner
+}
+
+func (s hostScanner) Imports(file project.File) ([]graph.Import, error) {
+	items, err := s.host.Imports(file.Abs, s.runner)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]graph.Import, 0, len(items))
+	for _, item := range items {
+		out = append(out, graph.Import{
+			Specifier: item.Specifier,
+			Start:     item.Start,
+			Length:    item.Length,
+			TypeOnly:  item.TypeOnly,
+			Resolved:  item.Resolved,
+		})
+	}
+	return out, nil
+}
+
+// loadGraph 在检查或降低之前把入口和全部显式相对依赖固定成快照。
+func (a *app) loadGraph(parsed sourceArgs) (*graph.Graph, error) {
+	if a.frontend != nil {
+		return nil, nil
+	}
+	root := a.root
+	if parsed.root != "" {
+		root = parsed.root
+	}
+	if root == "" {
+		return nil, diagnostic.New(diagnostic.Environment, "project.not-found", "找不到项目根；用 --root 指定目录")
+	}
+	p, err := project.Open(root)
+	if err != nil {
+		return nil, err
+	}
+	entry, err := p.ResolveEntry(parsed.file)
+	if err != nil {
+		return nil, err
+	}
+	if !a.hasRoot {
+		return nil, diagnostic.New(diagnostic.Environment, "project.not-found", "不在项目目录内：向上找不到 %s", toolchain.LockPath)
+	}
+	front, err := host.Ensure(a.root, a.runner, a.stderr)
+	if err != nil {
+		return nil, err
+	}
+	return graph.Load(p, entry, hostScanner{host: front, runner: a.runner})
+}
+
 // analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
 func (a *app) analyze(file, want string) (*pipeline.Result, error) {
 	if a.frontend != nil {
@@ -175,6 +230,9 @@ func (a *app) check(args []string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := a.loadGraph(parsed); err != nil {
+		return err
+	}
 	result, err := a.analyze(file, "check")
 	if err != nil {
 		return err
@@ -203,6 +261,10 @@ func (a *app) build(args []string) error {
 	if err != nil {
 		return err
 	}
+	g, err := a.loadGraph(parsed)
+	if err != nil {
+		return err
+	}
 	result, err := a.analyze(file, "build")
 	if err != nil {
 		return err
@@ -223,6 +285,7 @@ func (a *app) build(args []string) error {
 		InputData: data,
 		Output:    parsed.output,
 		Source:    sourceOf(a.root, result),
+		GraphHash: graphHash(g),
 	}, a.runner)
 	if err != nil {
 		return err
@@ -248,6 +311,10 @@ func (a *app) run(args []string) error {
 	if err != nil {
 		return err
 	}
+	g, err := a.loadGraph(parsed)
+	if err != nil {
+		return err
+	}
 	result, err := a.analyze(file, "build")
 	if err != nil {
 		return err
@@ -269,6 +336,7 @@ func (a *app) run(args []string) error {
 		InputData: data,
 		Output:    output,
 		Source:    sourceOf(a.root, result),
+		GraphHash: graphHash(g),
 	}, a.runner)
 	if err != nil {
 		return err
@@ -292,13 +360,27 @@ func (a *app) dump(args []string) error {
 	}
 	what := args[0]
 	switch what {
-	case "facts", "nir":
+	case "facts", "nir", "graph":
 	default:
-		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts 或 nir，收到 %q", what)
+		return diagnostic.New(diagnostic.Usage, "cli.unknown-topic", "dump 只接受 facts、nir 或 graph，收到 %q", what)
 	}
 	parsed, err := parseSourceArgs("dump", args[1:], false, false)
 	if err != nil {
 		return err
+	}
+	if what == "graph" {
+		g, err := a.loadGraph(parsed)
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(g.Report(), "", "  ")
+		if err != nil {
+			return diagnostic.New(diagnostic.Internal, "cli.encode-failed", "无法序列化依赖图").WithDetail(err.Error())
+		}
+		if _, err := a.stdout.Write(append(data, '\n')); err != nil {
+			return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出依赖图失败").WithDetail(err.Error())
+		}
+		return nil
 	}
 	file, err := a.resolveSource(parsed)
 	if err != nil {
@@ -329,6 +411,13 @@ func (a *app) dump(args []string) error {
 		return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出 %s 失败", what).WithDetail(err.Error())
 	}
 	return nil
+}
+
+func graphHash(g *graph.Graph) string {
+	if g == nil {
+		return ""
+	}
+	return g.Hash
 }
 
 // sourceOf 把结果里的源码身份转成构建记录的一项。路径尽量写成项目内相对

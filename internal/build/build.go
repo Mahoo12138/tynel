@@ -39,6 +39,7 @@ type Options struct {
 	InputData []byte  // 内存中的 NIR；非空时忽略 Input
 	Output    string  // 产物路径
 	Source    *Source // 可选：源码身份，写进构建记录
+	GraphHash string  // 可选：依赖图内容哈希，写进构建记录
 }
 
 // Source 是产生这份 NIR 的源码。从 NIR 文件构建时没有这一项。
@@ -54,6 +55,7 @@ type Record struct {
 	StartedAt      string  `json:"startedAt"`
 	DurationMillis int64   `json:"durationMillis"`
 	Source         *Source `json:"source,omitempty"`
+	GraphHash      string  `json:"graphHash,omitempty"`
 	Input          struct {
 		Path   string `json:"path"`
 		SHA256 string `json:"sha256"`
@@ -202,6 +204,7 @@ func Run(opts Options, runner toolchain.Runner) (*Record, error) {
 	record := &Record{SchemaVersion: 1, StartedAt: started.Format(time.RFC3339)}
 	record.DurationMillis = time.Since(started).Milliseconds()
 	record.Source = opts.Source
+	record.GraphHash = opts.GraphHash
 	record.Input.Path = inputPath
 	record.Input.SHA256 = inputSHA
 	record.Input.Bytes = len(data)

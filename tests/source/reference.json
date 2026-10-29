@@ -49,6 +49,11 @@
     "recursion-fact": {"comparison": "shared"},
     "recursion-mutual": {"comparison": "shared"},
     "recursion-local": {"comparison": "shared"},
+    "combo-sum": {"comparison": "shared"},
+    "combo-fact": {"comparison": "shared"},
+    "combo-branch": {"comparison": "shared"},
+    "combo-early": {"comparison": "shared"},
+    "combo-mixed": {"comparison": "shared"},
     "specials": {
       "comparison": "spelling",
       "note": "无穷在 Tynel 写作 +Inf / -Inf，Node 写作 Infinity / -Infinity；归一拼写后应完全一致"

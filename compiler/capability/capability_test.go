@@ -598,10 +598,12 @@ func TestTypeOnlyImportAllowed(t *testing.T) {
 	}
 }
 
-func TestValueImportRejected(t *testing.T) {
+func TestValueImportAllowed(t *testing.T) {
 	facts := base()
 	facts.Module = &frontend.Node{Kind: "Block", Start: 0, Length: 10, Children: []frontend.Node{
 		{Kind: "ImportDeclaration", Start: 0, Length: 5},
 	}}
-	wantCode(t, check(t, facts), "cap.import-value")
+	if findings := check(t, facts); len(findings) != 0 {
+		t.Fatalf("命名值导入应由模块符号表核对，不应在这里报能力限制：%v", findings)
+	}
 }

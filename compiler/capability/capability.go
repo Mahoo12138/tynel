@@ -121,11 +121,7 @@ func (c *checker) node(n *frontend.Node) {
 		// 类型声明由 Aliases 单独核对，这里不进入运行值。
 		return
 	case "ImportDeclaration":
-		if n.TypeOnly {
-			// 纯类型导入没有运行时动作；值导入要等到 05.04。
-			return
-		}
-		c.report(n.Start, "cap.import-value", "值导入不在本阶段子集内；只支持 import type")
+		// 命名导入由模块符号表核对；运行值由合并降低处理。
 		return
 	case "Block":
 		c.children(n)
@@ -431,6 +427,9 @@ func (c *checker) assignment(n *frontend.Node) {
 
 func (c *checker) identifier(n *frontend.Node) {
 	decl, ok := c.facts.Declaration(n.Target)
+	if (!ok || n.Target == 0) && !c.inFunction && c.crossModuleRef(n) {
+		return
+	}
 	if !ok || n.Target == 0 {
 		c.report(n.Start, "cap.unknown-name", "名称 %q 不是本文件里的参数或常量", n.Name)
 		return
@@ -448,6 +447,28 @@ func (c *checker) identifier(n *frontend.Node) {
 	}
 }
 
+// crossModuleRef 查事实里的跨模块值引用。只允许在模块初始化阶段使用；
+// 函数捕获模块值仍由 module.captured-variable 拒绝。
+func (c *checker) crossModuleRef(n *frontend.Node) bool {
+	for _, ref := range c.facts.References {
+		if ref.Start == n.Start && ref.TargetModule != "" && ref.TargetName != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// crossModuleCall 查事实里的跨模块调用记录。语法节点上的 Target 是 0，
+// 但 Call.CalleeModule 已经由前端检查器填好。
+func (c *checker) crossModuleCall(n *frontend.Node) bool {
+	for _, call := range c.facts.Calls {
+		if call.Start == n.Start && call.CalleeModule != "" && call.CalleeName != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *checker) call(n *frontend.Node) {
 	if len(n.Children) == 0 {
 		c.report(n.Start, "cap.unsupported-syntax", "调用缺少被调用者")
@@ -463,6 +484,12 @@ func (c *checker) call(n *frontend.Node) {
 			return
 		}
 		decl, ok := c.facts.Declaration(callee.Target)
+		if (!ok || callee.Target == 0) && c.crossModuleCall(n) {
+			for i := range args {
+				c.valueNode(&args[i], "调用 "+callee.Name+" 的实参")
+			}
+			return
+		}
 		if !ok || callee.Target == 0 || decl.Kind != frontend.DeclFunction {
 			c.report(n.Start, "cap.unknown-callee", "调用目标 %q 不是本文件里声明的函数", callee.Name)
 			return

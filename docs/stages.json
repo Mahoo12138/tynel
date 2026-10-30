@@ -3,7 +3,7 @@
   "track": "mvp",
   "deliverable": "typescript-to-native-compiler",
   "phase": "implementation",
-  "currentImplementationNode": "05.05",
+  "currentImplementationNode": "05.06",
   "target": "darwin/arm64",
   "deferredTargets": [
     "windows/amd64"
@@ -635,9 +635,14 @@
             "05.05"
           ],
           "planSection": "PLAN.md#task-05-06",
-          "status": "planned",
+          "status": "verified",
           "implementationCommits": [],
-          "evidence": []
+          "evidence": [
+            "docs/reference/merged-program.md",
+            "docs/validation/05-06-merge.md",
+            "compiler/merge/merge.go",
+            "compiler/lower/lower.go"
+          ]
         },
         {
           "id": "05.07",

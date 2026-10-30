@@ -77,14 +77,81 @@ func Lower(snapshot *source.Snapshot, facts *frontend.Facts) (*nir.Module, error
 	return module, nil
 }
 
+// LowerMerged 把一个或多个模块的事实降低成单个 NIR。每个模块体变成
+// __init$N，入口 main 按 order 依次调用；函数名已经由 merge 加了模块前缀。
+func LowerMerged(facts *frontend.Facts, snapshots map[string]*source.Snapshot, bodies map[string]*frontend.Node, order []string) (*nir.Module, error) {
+	if facts == nil || len(order) == 0 {
+		return nil, diagnostic.New(diagnostic.Internal, "lower.missing-input", "合并降低缺少事实或模块顺序")
+	}
+	if err := facts.Validate(); err != nil {
+		return nil, err
+	}
+	l := &lowerer{
+		snapshots: snapshots,
+		facts:     facts,
+		names:     make(map[int]string, len(facts.Declarations)),
+	}
+	if len(snapshots) > 0 {
+		l.snapshot = snapshots[order[0]]
+	}
+	module := &nir.Module{SchemaVersion: nir.SchemaVersion, Entry: EntryName}
+
+	for i := range facts.Declarations {
+		decl := &facts.Declarations[i]
+		if decl.Kind == frontend.DeclFunction {
+			l.names[decl.ID] = decl.Name
+		}
+	}
+	for i := range facts.Declarations {
+		decl := &facts.Declarations[i]
+		if decl.Kind != frontend.DeclFunction {
+			continue
+		}
+		fn, err := l.function(decl)
+		if err != nil {
+			return nil, err
+		}
+		module.Functions = append(module.Functions, *fn)
+	}
+
+	var initNames []string
+	for i, path := range order {
+		name := fmt.Sprintf("__init$%d", i)
+		init, err := l.entryWith(name, bodies[path], path)
+		if err != nil {
+			return nil, err
+		}
+		module.Functions = append(module.Functions, *init)
+		initNames = append(initNames, name)
+	}
+
+	mainFn := &nir.Function{Name: EntryName, Result: nir.TypeVoid}
+	for _, name := range initNames {
+		mainFn.Body = append(mainFn.Body, nir.Stmt{
+			Op:    nir.OpDiscard,
+			Value: &nir.Expr{Op: nir.OpCall, Function: name},
+		})
+	}
+	mainFn.Body = append(mainFn.Body, nir.Stmt{Op: nir.OpReturn})
+	module.Functions = append(module.Functions, *mainFn)
+
+	if err := nir.Verify(module); err != nil {
+		return nil, diagnostic.New(diagnostic.Internal, "lower.invalid-output", "合并降低产出的 NIR 没有通过验证").WithDetail(err.Error())
+	}
+	return module, nil
+}
+
 type lowerer struct {
-	snapshot *source.Snapshot
-	facts    *frontend.Facts
-	names    map[int]string // 函数声明 ID → NIR 函数名
-	result   string         // 当前正在降低的函数的返回类型
-	temp     int            // 短路结果与实参物化的临时名序号
-	loops    []int          // 当前函数内由内到外的循环 id
-	nextLoop int            // 下一个循环 id
+	snapshot      *source.Snapshot
+	snapshots     map[string]*source.Snapshot
+	facts         *frontend.Facts
+	currentModule string
+	inInit        bool
+	names         map[int]string // 函数声明 ID → NIR 函数名
+	result        string         // 当前正在降低的函数的返回类型
+	temp          int            // 短路结果与实参物化的临时名序号
+	loops         []int          // 当前函数内由内到外的循环 id
+	nextLoop      int            // 下一个循环 id
 }
 
 // scope 是当前可见的声明。用声明 ID 而不是名字做键：两个函数里同名的参数是
@@ -142,6 +209,10 @@ func (s *scope) isMutable(id int) bool {
 
 func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 	l.loops = nil
+	l.currentModule = decl.Module
+	if snapshot := l.snapshots[decl.Module]; snapshot != nil {
+		l.snapshot = snapshot
+	}
 	if decl.Result == nil {
 		return nil, l.fail(decl.Start, "lower.bad-type", "函数 %q 缺少返回类型摘要", decl.Name)
 	}
@@ -180,23 +251,31 @@ func (l *lowerer) function(decl *frontend.Declaration) (*nir.Function, error) {
 
 // entry 把模块体降低成入口函数：顶层 const 按源码顺序求值并绑定成局部值。
 func (l *lowerer) entry() (*nir.Function, error) {
-	fn := &nir.Function{Name: EntryName, Result: nir.TypeVoid}
+	return l.entryWith(EntryName, l.facts.Module, l.facts.ModulePath)
+}
+
+func (l *lowerer) entryWith(name string, body *frontend.Node, module string) (*nir.Function, error) {
+	fn := &nir.Function{Name: name, Result: nir.TypeVoid}
 	sc := &scope{params: map[int]string{}, locals: map[int]string{}, mutable: map[int]bool{}}
-	if l.facts.Module == nil {
+	l.inInit = true
+	defer func() { l.inInit = false }()
+	if snapshot := l.snapshots[module]; snapshot != nil {
+		l.snapshot = snapshot
+	}
+	l.currentModule = module
+	if body == nil {
 		fn.Body = []nir.Stmt{{Op: nir.OpReturn}}
 		return fn, nil
 	}
-	for i := range l.facts.Module.Children {
-		stmt := &l.facts.Module.Children[i]
+	for i := range body.Children {
+		stmt := &body.Children[i]
 		switch stmt.Kind {
 		case "TypeAliasDeclaration", "InterfaceDeclaration":
 			// 类型声明不产生运行时值；能力检查已经核对过类别。
 			continue
 		case "ImportDeclaration":
-			if stmt.TypeOnly {
-				continue
-			}
-			return nil, l.fail(stmt.Start, "lower.import-value", "值导入不在本阶段子集内；只支持 import type")
+			// 导入绑定由模块符号表核对；初始化体本身不产生运行时语句。
+			continue
 		case "Const":
 			decl, ok := l.facts.Declaration(stmt.Decl)
 			if !ok || decl.Kind != frontend.DeclConst {
@@ -544,8 +623,7 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir
 	}
 	switch n.Kind {
 	case "Identifier":
-		e, err := l.identifier(n, sc)
-		return e, nil, err
+		return l.identifier(n, sc, depth)
 	case "NumericLiteral":
 		if n.Bits == "" {
 			return nil, nil, l.fail(n.Start, "lower.bad-literal", "数字字面量缺少位模式")
@@ -591,32 +669,36 @@ func (l *lowerer) expr(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir
 	}
 }
 
-func (l *lowerer) identifier(n *frontend.Node, sc *scope) (*nir.Expr, error) {
+func (l *lowerer) identifier(n *frontend.Node, sc *scope, depth int) (*nir.Expr, []nir.Stmt, error) {
 	decl, ok := l.facts.Declaration(n.Target)
 	if !ok || n.Target == 0 {
-		return nil, l.fail(n.Start, "lower.unknown-name", "名称 %q 不是本文件里的声明", n.Name)
+		return nil, nil, l.fail(n.Start, "lower.unknown-name", "名称 %q 不是本文件里的声明", n.Name)
 	}
 	switch decl.Kind {
 	case frontend.DeclParameter:
 		name, ok := sc.lookupParam(decl.ID)
 		if !ok {
-			return nil, l.fail(n.Start, "lower.unknown-name", "参数 %q 不属于当前函数", n.Name)
+			return nil, nil, l.fail(n.Start, "lower.unknown-name", "参数 %q 不属于当前函数", n.Name)
 		}
-		return &nir.Expr{Op: nir.OpParam, Name: name, Pos: l.pos(n.Start)}, nil
+		return &nir.Expr{Op: nir.OpParam, Name: name, Pos: l.pos(n.Start)}, nil, nil
 	case frontend.DeclConst:
-		name, ok := sc.lookup(decl.ID)
-		if !ok {
-			return nil, l.fail(n.Start, "lower.module-const-in-function", "模块常量 %q 在函数内不可见", n.Name)
+		if name, ok := sc.lookup(decl.ID); ok {
+			return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil, nil
 		}
-		return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil
+		if l.inInit && decl.Body != nil {
+			// 初始化阶段读取另一个模块的顶层 const。简单纯表达式可以在这里
+			// 内联；函数读取模块常量仍由 capability/modules 拒绝。
+			return l.expr(decl.Body, sc, depth+1)
+		}
+		return nil, nil, l.fail(n.Start, "lower.module-const-in-function", "模块常量 %q 在函数内不可见", n.Name)
 	case frontend.DeclLocal, frontend.DeclLet:
 		name, ok := sc.lookup(decl.ID)
 		if !ok {
-			return nil, l.fail(n.Start, "lower.unknown-name", "局部值 %q 不在当前作用域内", n.Name)
+			return nil, nil, l.fail(n.Start, "lower.unknown-name", "局部值 %q 不在当前作用域内", n.Name)
 		}
-		return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil
+		return &nir.Expr{Op: nir.OpLocal, Name: name, Pos: l.pos(n.Start)}, nil, nil
 	default:
-		return nil, l.fail(n.Start, "lower.function-value", "函数 %q 作为值使用", n.Name)
+		return nil, nil, l.fail(n.Start, "lower.function-value", "函数 %q 作为值使用", n.Name)
 	}
 }
 

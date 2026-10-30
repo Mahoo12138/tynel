@@ -13,10 +13,13 @@ import (
 	"github.com/Mahoo12138/tynel/compiler/diagnostic"
 	"github.com/Mahoo12138/tynel/compiler/frontend"
 	"github.com/Mahoo12138/tynel/compiler/graph"
+	"github.com/Mahoo12138/tynel/compiler/lower"
+	"github.com/Mahoo12138/tynel/compiler/merge"
 	"github.com/Mahoo12138/tynel/compiler/modules"
 	"github.com/Mahoo12138/tynel/compiler/nir"
 	"github.com/Mahoo12138/tynel/compiler/pipeline"
 	"github.com/Mahoo12138/tynel/compiler/project"
+	"github.com/Mahoo12138/tynel/compiler/source"
 	"github.com/Mahoo12138/tynel/internal/build"
 	"github.com/Mahoo12138/tynel/internal/host"
 	"github.com/Mahoo12138/tynel/internal/toolchain"
@@ -218,7 +221,52 @@ func (a *app) loadModules(parsed sourceArgs) (*modules.Table, error) {
 	return modules.Build(facts[0], facts[1:])
 }
 
-// analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。// analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
+// loadMerged 把依赖图里的所有模块合并降低成一个 NIR。facts 与快照一一对应，
+// 初始化顺序来自 modules.Plan。
+func (a *app) loadMerged(g *graph.Graph) (*nir.Module, error) {
+	if g == nil {
+		return nil, diagnostic.New(diagnostic.Internal, "merge.test-frontend", "假前端不能合并模块")
+	}
+	front, err := host.Ensure(a.root, a.runner, a.stderr)
+	if err != nil {
+		return nil, err
+	}
+	facts := make([]*frontend.Facts, 0, len(g.Files))
+	units := make([]merge.Unit, 0, len(g.Files))
+	for _, file := range g.Files {
+		deps := make([]string, 0, len(g.Files)-1)
+		for _, other := range g.Files {
+			if other.Abs != file.Abs {
+				deps = append(deps, other.Abs)
+			}
+		}
+		item, err := front.Facts(file.Abs, deps, a.runner)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err := file.Snapshot(source.DefaultLimits())
+		if err != nil {
+			return nil, err
+		}
+		facts = append(facts, item)
+		units = append(units, merge.Unit{Snapshot: snapshot, Facts: item})
+	}
+	table, err := modules.Build(facts[0], facts[1:])
+	if err != nil {
+		return nil, err
+	}
+	plan, err := modules.Plan(table)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := merge.Build(units, plan.Order)
+	if err != nil {
+		return nil, err
+	}
+	return lower.LowerMerged(merged.Facts, merged.Snapshots, merged.Bodies, plan.Order)
+}
+
+// analyze 准备前端宿主并检查一个文件。want 决定结果里附带什么。
 func (a *app) analyze(file, want string, deps []string) (*pipeline.Result, error) {
 	if a.frontend != nil {
 		// 测试用：直接给出前端结果，不启动宿主进程。
@@ -270,6 +318,14 @@ func (a *app) check(args []string) error {
 	if err != nil {
 		return err
 	}
+	if g != nil && len(g.Files) > 1 {
+		merged, err := a.loadMerged(g)
+		if err != nil {
+			return err
+		}
+		result.Summary.Functions = len(merged.Functions)
+		result.Summary.Verified = true
+	}
 	if parsed.json {
 		if err := pipeline.Encode(a.stdout, result); err != nil {
 			return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出检查结果失败").WithDetail(err.Error())
@@ -298,7 +354,7 @@ func (a *app) build(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(file, "build", graphDeps(g))
+	result, err := a.analyze(file, "check", graphDeps(g))
 	if err != nil {
 		return err
 	}
@@ -306,10 +362,19 @@ func (a *app) build(args []string) error {
 	if err := exitFor(result); err != nil {
 		return err
 	}
-	if result.NIR == nil {
-		return diagnostic.New(diagnostic.Internal, "cli.no-nir", "前端没有返回 NIR")
+	var data []byte
+	if a.frontend != nil {
+		if result.NIR == nil {
+			return diagnostic.New(diagnostic.Internal, "cli.no-nir", "前端没有返回 NIR")
+		}
+		data, err = nir.EncodeBytes(result.NIR)
+	} else {
+		merged, err := a.loadMerged(g)
+		if err != nil {
+			return err
+		}
+		data, err = nir.EncodeBytes(merged)
 	}
-	data, err := nir.EncodeBytes(result.NIR)
 	if err != nil {
 		return diagnostic.New(diagnostic.Internal, "cli.encode-failed", "无法序列化降低结果").WithDetail(err.Error())
 	}
@@ -348,7 +413,7 @@ func (a *app) run(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := a.analyze(file, "build", graphDeps(g))
+	result, err := a.analyze(file, "check", graphDeps(g))
 	if err != nil {
 		return err
 	}
@@ -356,10 +421,19 @@ func (a *app) run(args []string) error {
 	if err := exitFor(result); err != nil {
 		return err
 	}
-	if result.NIR == nil {
-		return diagnostic.New(diagnostic.Internal, "cli.no-nir", "前端没有返回 NIR")
+	var data []byte
+	if a.frontend != nil {
+		if result.NIR == nil {
+			return diagnostic.New(diagnostic.Internal, "cli.no-nir", "前端没有返回 NIR")
+		}
+		data, err = nir.EncodeBytes(result.NIR)
+	} else {
+		merged, err := a.loadMerged(g)
+		if err != nil {
+			return err
+		}
+		data, err = nir.EncodeBytes(merged)
 	}
-	data, err := nir.EncodeBytes(result.NIR)
 	if err != nil {
 		return diagnostic.New(diagnostic.Internal, "cli.encode-failed", "无法序列化降低结果").WithDetail(err.Error())
 	}
@@ -400,6 +474,26 @@ func (a *app) dump(args []string) error {
 	parsed, err := parseSourceArgs("dump", args[1:], false, false)
 	if err != nil {
 		return err
+	}
+	if what == "nir" {
+		g, err := a.loadGraph(parsed)
+		if err != nil {
+			return err
+		}
+		if g != nil && len(g.Files) > 1 {
+			merged, err := a.loadMerged(g)
+			if err != nil {
+				return err
+			}
+			data, err := json.MarshalIndent(merged, "", "  ")
+			if err != nil {
+				return diagnostic.New(diagnostic.Internal, "cli.encode-failed", "无法序列化合并 NIR").WithDetail(err.Error())
+			}
+			if _, err := a.stdout.Write(append(data, '\n')); err != nil {
+				return diagnostic.New(diagnostic.Internal, "cli.write-failed", "写出合并 NIR 失败").WithDetail(err.Error())
+			}
+			return nil
+		}
 	}
 	if what == "init" {
 		table, err := a.loadModules(parsed)
